@@ -157,13 +157,9 @@ function uuidV4() {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function extractCopyBlock(docText) {
-  const lines = normalizeLines(docText);
-  const section = findSectionRange(lines, "## COPY_THIS_TO_CHATGPT");
-  if (!section) throw new Error("COPY_THIS_TO_CHATGPT section not found.");
-  const block = findFencedBlock(lines, section.start, section.end, "bai");
-  if (!block) throw new Error("BAI code block not found.");
-  return lines.slice(block.start, block.end + 1).join("\n");
+function prepareProtocolCopy(docText, workflowId) {
+  const replaced = docText.replaceAll("{{RANDOM_UUID}}", workflowId);
+  return replaced.trim();
 }
 
 async function loadState() {
@@ -598,8 +594,13 @@ async function copyProtocolFromMarkdown() {
   copyProtocolBtn.textContent = "Copying…";
   try {
     const doc = await loadProtocolDoc();
-    const block = extractCopyBlock(doc);
-    const text = block.replaceAll("{{RANDOM_UUID}}", uuidV4());
+    const newWorkflowId = uuidV4();
+    state.workflow_id = newWorkflowId;
+    state.awaiting_ack = true;
+    state.ready = false;
+    await saveState();
+    renderAll();
+    const text = prepareProtocolCopy(doc, newWorkflowId);
     const ok = await copyText(text);
     copyProtocolBtn.textContent = ok ? "Copied ✅" : "Copy failed";
     if (ok) {
@@ -625,12 +626,6 @@ async function scanChat() {
   setScanning(true);
   try {
     const config = await loadProtocolConfig();
-    if (!state.workflow_id) {
-      state.workflow_id = `bai_${uid()}`;
-      state.awaiting_ack = true;
-      state.ready = false;
-      await saveState();
-    }
 
     const resp = await chrome.runtime.sendMessage({
       type: "BAI_SCAN_CHAT_ACTIVE_TAB",
@@ -652,10 +647,20 @@ async function scanChat() {
 
     const result = resp.result || {};
     const handshake = result.handshake || null;
+    const ack = result.ack || null;
     const actions = Array.isArray(result.actions) ? result.actions : [];
     const ackSeen = !!result.ack_seen;
 
-    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === config.handshake_state_awaiting_ack && !ackSeen) {
+    if (!state.workflow_id && (handshake?.workflow_id || ack?.workflow_id)) {
+      state.workflow_id = handshake?.workflow_id || ack?.workflow_id;
+    }
+
+    if (
+      handshake &&
+      handshake.workflow_id === state.workflow_id &&
+      handshake.state === config.handshake_state_awaiting_ack &&
+      !ackSeen
+    ) {
       state.awaiting_ack = true;
       state.ready = false;
     } else if (ackSeen) {
@@ -676,8 +681,13 @@ async function scanChat() {
     await saveState();
     renderAll();
 
-    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === config.handshake_state_awaiting_ack && !ackSeen) {
-      const ackLine = `${config.ack_line_prefix} {"protocol":"${config.protocol}","workflow_id":"${state.workflow_id}","state":"${config.ack_state}","ack_nonce":"${uid()}"}`;
+    if (
+      handshake &&
+      handshake.workflow_id === state.workflow_id &&
+      handshake.state === config.handshake_state_awaiting_ack &&
+      !ackSeen
+    ) {
+      const ackLine = `${config.ack_line_prefix} {"protocol":"${config.protocol}","workflow_id":"${state.workflow_id}","state":"${config.ack_state}","ack_nonce":"${uid()}","kind":"ack"}`;
       const ok = await copyText(ackLine);
       toast(ok ? "ACK copied (paste into chat)" : "Copy failed (clipboard blocked)");
     } else {

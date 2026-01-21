@@ -270,17 +270,12 @@ function setValueSelector(selector, text) {
   return { ok: true, selector, prev, next: el.value };
 }
 
-function getAssistantMessageNodes() {
-  const nodes = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
+function getChatMessageNodes() {
+  const nodes = Array.from(document.querySelectorAll('[data-message-author-role="assistant"], [data-message-author-role="user"]'));
   if (nodes.length) return nodes;
 
   const turns = Array.from(document.querySelectorAll('[data-testid="conversation-turn"]'));
-  if (turns.length) {
-    return turns.filter(t => {
-      const text = (t.innerText || "").toLowerCase();
-      return text.includes("bai_") || t.querySelector("pre code");
-    });
-  }
+  if (turns.length) return turns;
 
   const main = document.querySelector("main");
   return main ? [main] : [];
@@ -333,11 +328,12 @@ function parseJsonLine(prefix, line) {
 }
 
 function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, ack_prefix, ack_state, workflow_id }) {
-  const assistantNodes = getAssistantMessageNodes();
+  const chatNodes = getChatMessageNodes();
 
   const actions = [];
   let handshake = null;
   let ackSeen = false;
+  let ack = null;
 
   const actionPfx = action_prefix ? String(action_prefix) : null;
   const ackPfx = ack_prefix ? String(ack_prefix) : null;
@@ -345,18 +341,24 @@ function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, a
   const hsPfx = handshake_prefix ? String(handshake_prefix) : null;
   const hsLang = handshake_lang ? String(handshake_lang).toLowerCase() : null;
 
-  for (const node of assistantNodes) {
+  for (const node of chatNodes) {
     if (hsLang) {
       const codes = Array.from(node.querySelectorAll("pre code"));
       for (const c of codes) {
         const lang = detectCodeBlockLanguage(c);
-        if (lang !== hsLang) continue;
+        if (lang !== hsLang && lang !== "json" && lang !== "javascript") continue;
         const raw = (c.textContent || "").trim();
         if (!raw) continue;
         try {
           const obj = JSON.parse(raw);
           if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
-            if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
+            if (!workflow_id || obj.workflow_id === workflow_id) {
+              if (obj.kind === "handshake" || obj.state === "awaiting_extension_ack") handshake = obj;
+              if (obj.kind === "ack" || obj.state === ackState) {
+                ackSeen = true;
+                ack = ack || obj;
+              }
+            }
           }
         } catch (_) {}
       }
@@ -370,7 +372,10 @@ function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, a
         if (ackParsed?.obj) {
           const obj = ackParsed.obj;
           if (obj?.protocol === protocol && obj?.workflow_id && (!workflow_id || obj.workflow_id === workflow_id)) {
-            if (obj.state === ackState) ackSeen = true;
+            if (obj.state === ackState || obj.kind === "ack") {
+              ackSeen = true;
+              ack = ack || obj;
+            }
           }
         }
       }
@@ -383,6 +388,18 @@ function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, a
             if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
           }
         }
+      } else if (line.startsWith("{") && line.endsWith("}")) {
+        if (!isLikelyCompleteJson(line)) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (obj?.protocol !== protocol || !obj?.workflow_id) continue;
+          if (workflow_id && obj.workflow_id !== workflow_id) continue;
+          if (obj.kind === "handshake") handshake = obj;
+          if (obj.kind === "ack" || obj.state === ackState) {
+            ackSeen = true;
+            ack = ack || obj;
+          }
+        } catch (_) {}
       }
 
       if (actionPfx) {
@@ -417,7 +434,7 @@ function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, a
     deduped.push(a);
   }
 
-  return { ok: true, handshake, actions: deduped, ack_seen: ackSeen };
+  return { ok: true, handshake, actions: deduped, ack_seen: ackSeen, ack };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
