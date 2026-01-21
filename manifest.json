@@ -8,5 +8,11 @@
   "host_permissions": ["<all_urls>"],
   "action": { "default_title": "Open bai" },
   "background": { "service_worker": "sw.js" },
-  "side_panel": { "default_path": "sidepanel.html" }
+  "side_panel": { "default_path": "sidepanel.html" },
+  "web_accessible_resources": [
+    {
+      "resources": ["PROTOCOL.md"],
+      "matches": ["<all_urls>"]
+    }
+  ]
 }
