@@ -1,8 +1,73 @@
 {
-  "protocol": "BAI/0.2",
+  "protocol": "BAI/0.3",
   "handshake_block_language": "bai",
-  "handshake_line_prefix": "BAI_HANDSHAKE",
+  "handshake_line_prefix": null,
   "action_line_prefix": "BAI_ACTION",
   "ack_line_prefix": "BAI_ACK",
-  "bootstrap_prompt_template": "BAI PROTOCOL INIT (BAI/0.2)\n\nWORKFLOW_ID: {WORKFLOW_ID}\n\nRules (STRICT):\n1) First assistant reply MUST include exactly ONE `bai` code block with a single JSON object:\n   {\"protocol\":\"BAI/0.2\",\"workflow_id\":\"{WORKFLOW_ID}\",\"state\":\"awaiting_extension_ack\",\"capabilities\":[\"action_lines\"]}\n2) Do NOT output actions until you receive a single ACK line from the extension.\n3) When producing actions, output ONLY one action per line with this exact prefix:\n   BAI_ACTION {\"protocol\":\"BAI/0.2\",\"workflow_id\":\"{WORKFLOW_ID}\",\"action_id\":1,\"type\":\"click\",\"payload\":{\"selector\":\"...\"}}\n   - action_id starts at 1 and increments by 1.\n4) Extension ACK format:\n   BAI_ACK {\"protocol\":\"BAI/0.2\",\"workflow_id\":\"{WORKFLOW_ID}\",\"state\":\"extension_acknowledged\",\"ack_nonce\":\"...\"}\n5) If missing info, ask ONE short question (and do NOT output BAI_ACTION lines).\n\nAction types:\n- click: payload {\"selector\":\"...\"}\n- input_text: payload {\"selector\":\"...\",\"text\":\"...\"}\n- wait: payload {\"ms\":800}\n- scroll: payload {\"y\":600}\n"
+  "bootstrap_prompt_template": "BAI PROTOCOL INIT (BAI/0.3)\n\nWORKFLOW_ID: {WORKFLOW_ID}\n\nRules (STRICT):\n1) First assistant reply MUST include exactly ONE `bai` code block with a single JSON object and no other code blocks.\n   {\"protocol\":\"BAI/0.3\",\"workflow_id\":\"{WORKFLOW_ID}\",\"kind\":\"handshake\",\"state\":\"awaiting_extension_ack\",\"capabilities\":[\"action_lines\"]}\n2) Do NOT output actions until you receive exactly ONE ACK line from the extension:\n   BAI_ACK {\"protocol\":\"BAI/0.3\",\"workflow_id\":\"{WORKFLOW_ID}\",\"kind\":\"ack\",\"state\":\"extension_acknowledged\",\"ack_nonce\":\"...\"}\n3) When producing actions, output ONLY one action per line with this exact prefix and schema:\n   BAI_ACTION {\"protocol\":\"BAI/0.3\",\"workflow_id\":\"{WORKFLOW_ID}\",\"kind\":\"action\",\"ack_nonce\":\"...\",\"action_id\":1,\"type\":\"click\",\"payload\":{\"selector\":{\"type\":\"css\",\"value\":\"...\"}}}\n   - action_id starts at 1 and MUST strictly increase by 1 within a workflow.\n   - Every action MUST echo the ack_nonce from the ACK line exactly.\n4) If required info is missing, ask ONE short question and do NOT output any BAI_ACTION lines.",
+  "action_types": [
+    {
+      "type": "click",
+      "payload_schema": {
+        "selector": {
+          "type": "css|xpath|aria|text",
+          "value": "string"
+        },
+        "selector_compat": "string (css)"
+      }
+    },
+    {
+      "type": "input_text",
+      "payload_schema": {
+        "selector": {
+          "type": "css|xpath|aria|text",
+          "value": "string"
+        },
+        "selector_compat": "string (css)",
+        "text": "string"
+      }
+    },
+    {
+      "type": "wait",
+      "payload_schema": {
+        "ms": "number"
+      }
+    },
+    {
+      "type": "scroll",
+      "payload_schema": {
+        "y": "number"
+      }
+    },
+    {
+      "type": "done",
+      "payload_schema": {
+        "success": "boolean",
+        "summary": "string (optional)"
+      }
+    }
+  ],
+  "parsing_notes": [
+    "Handshake: parse the last assistant message textContent; extract the single ```bai fenced block; JSON.parse its contents.",
+    "ACK: scan user/extension messages for a single line starting with 'BAI_ACK '; parse the JSON substring after the prefix.",
+    "Actions: scan assistant messages for lines starting with 'BAI_ACTION '; parse the JSON substring after the prefix.",
+    "Ignore all other text. Debounce DOM mutations and parse only when the closing fence/backticks or a line break is present.",
+    "Reject actions if protocol/workflow_id mismatches, ack_nonce mismatches, or action_id is non-monotonic."
+  ],
+  "compatibility_notes": {
+    "breaking_changes": [
+      "Handshake JSON now requires kind, state, and capabilities and must be the only code block.",
+      "Actions require kind and ack_nonce and must be plaintext lines only.",
+      "ACK requires kind and ack_nonce; action_id must be strictly increasing.",
+      "New done action type and lifecycle states: awaiting_extension_ack -> active -> done|error."
+    ],
+    "non_breaking_changes": [
+      "Selector payload allows object form with type/value while still accepting a string (css)."
+    ],
+    "migration_strategy": [
+      "Extension can detect protocol version from handshake JSON and route parsing/validation accordingly.",
+      "During migration, accept both BAI/0.2 and BAI/0.3 handshakes; enforce ack_nonce and kind only for 0.3.",
+      "Maintain backward-compatible selector parsing: if selector is a string, treat as css."
+    ]
+  }
 }
