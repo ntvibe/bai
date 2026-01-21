@@ -271,17 +271,17 @@ function setValueSelector(selector, text) {
 }
 
 function getAssistantMessageNodes() {
-  // ChatGPT: messages have data-message-author-role="assistant"
   const nodes = Array.from(document.querySelectorAll('[data-message-author-role="assistant"]'));
   if (nodes.length) return nodes;
 
-  // Fallback: try conversation turns
   const turns = Array.from(document.querySelectorAll('[data-testid="conversation-turn"]'));
   if (turns.length) {
-    return turns.filter(t => (t.innerText || "").toLowerCase().includes("bai_action") || t.querySelector("pre code"));
+    return turns.filter(t => {
+      const text = (t.innerText || "").toLowerCase();
+      return text.includes("bai_") || t.querySelector("pre code");
+    });
   }
 
-  // Last resort: whole main
   const main = document.querySelector("main");
   return main ? [main] : [];
 }
@@ -292,6 +292,44 @@ function detectCodeBlockLanguage(codeEl) {
   if (m) return m[1].toLowerCase();
   const dl = codeEl.getAttribute("data-language") || codeEl.parentElement?.getAttribute("data-language");
   return dl ? String(dl).toLowerCase() : "";
+}
+
+function isLikelyCompleteJson(text) {
+  if (!text.endsWith("}")) return false;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    if (ch === "}") depth -= 1;
+    if (depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+function parseJsonLine(prefix, line) {
+  if (!line.startsWith(prefix + " ")) return null;
+  const jsonStr = line.slice((prefix + " ").length).trim();
+  if (!isLikelyCompleteJson(jsonStr)) return null;
+  try {
+    return { obj: JSON.parse(jsonStr), raw: jsonStr };
+  } catch (_) {
+    return null;
+  }
 }
 
 function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, ack_prefix, workflow_id }) {
@@ -307,12 +345,12 @@ function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, a
   const hsLang = String(handshake_lang || "bai").toLowerCase();
 
   for (const node of assistantNodes) {
-    // 1) Handshake from actual code blocks (preferred)
     const codes = Array.from(node.querySelectorAll("pre code"));
     for (const c of codes) {
       const lang = detectCodeBlockLanguage(c);
       if (lang !== hsLang) continue;
       const raw = (c.textContent || "").trim();
+      if (!raw) continue;
       try {
         const obj = JSON.parse(raw);
         if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
@@ -321,54 +359,47 @@ function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, a
       } catch (_) {}
     }
 
-    // 2) Scan visible text lines for action / ack / optional handshake line
     const text = (node.innerText || node.textContent || "").split("\n").map(s => s.trim()).filter(Boolean);
 
     for (const line of text) {
-      if (line.startsWith(ackPfx + " ")) {
-        const jsonStr = line.slice((ackPfx + " ").length).trim();
-        try {
-          const obj = JSON.parse(jsonStr);
-          if (obj?.protocol === protocol && obj?.workflow_id && (!workflow_id || obj.workflow_id === workflow_id)) {
-            if (workflow_id && obj.workflow_id === workflow_id && obj.state === "extension_acknowledged") ackSeen = true;
-          }
-        } catch (_) {}
+      const ackParsed = parseJsonLine(ackPfx, line);
+      if (ackParsed?.obj) {
+        const obj = ackParsed.obj;
+        if (obj?.protocol === protocol && obj?.workflow_id && (!workflow_id || obj.workflow_id === workflow_id)) {
+          if (obj.state === "extension_acknowledged") ackSeen = true;
+        }
       }
 
-      if (line.startsWith(hsPfx + " ")) {
-        const jsonStr = line.slice((hsPfx + " ").length).trim();
-        try {
-          const obj = JSON.parse(jsonStr);
-          if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
-            if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
-          }
-        } catch (_) {}
+      const hsParsed = parseJsonLine(hsPfx, line);
+      if (hsParsed?.obj) {
+        const obj = hsParsed.obj;
+        if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
+          if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
+        }
       }
 
-      if (line.startsWith(actionPfx + " ")) {
-        const jsonStr = line.slice((actionPfx + " ").length).trim();
-        try {
-          const obj = JSON.parse(jsonStr);
-          if (!obj || typeof obj !== "object") continue;
-          if (obj.protocol !== protocol) continue;
-          if (workflow_id && obj.workflow_id !== workflow_id) continue;
+      const actionParsed = parseJsonLine(actionPfx, line);
+      if (actionParsed?.obj) {
+        const obj = actionParsed.obj;
+        if (!obj || typeof obj !== "object") continue;
+        if (obj.protocol !== protocol) continue;
+        if (!obj.workflow_id || !obj.type || obj.action_id == null) continue;
+        if (workflow_id && obj.workflow_id !== workflow_id) continue;
 
-          const key = `${obj.workflow_id}:${obj.action_id}:${obj.type}:${jsonStr.length}`;
-          actions.push({
-            key,
-            protocol: obj.protocol,
-            workflow_id: obj.workflow_id,
-            action_id: obj.action_id,
-            type: obj.type,
-            payload: obj.payload || {},
-            raw: jsonStr
-          });
-        } catch (_) {}
+        const key = `${obj.workflow_id}:${obj.action_id}:${obj.type}`;
+        actions.push({
+          key,
+          protocol: obj.protocol,
+          workflow_id: obj.workflow_id,
+          action_id: obj.action_id,
+          type: obj.type,
+          payload: obj.payload || {},
+          raw: actionParsed.raw
+        });
       }
     }
   }
 
-  // Deduplicate actions by key
   const seen = new Set();
   const deduped = [];
   for (const a of actions) {
