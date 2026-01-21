@@ -113,6 +113,39 @@
 
       .smallbtn { padding: 8px 10px; border-radius: 12px; font-size: 12px; }
       .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 11px; opacity: .8; }
+      .modal.wide { width: min(520px, 100%); }
+      .protocol-text {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 11px;
+        border: 1px solid rgba(127,127,127,.35);
+        border-radius: 12px;
+        padding: 10px;
+        background: color-mix(in srgb, Canvas 92%, CanvasText 8%);
+        max-height: 260px;
+        overflow: auto;
+        white-space: pre-wrap;
+        line-height: 1.35;
+      }
+      .progress {
+        height: 6px;
+        border-radius: 999px;
+        background: rgba(127,127,127,.25);
+        overflow: hidden;
+        margin-top: 8px;
+        display: none;
+      }
+      .progress.on { display: block; }
+      .progress-bar {
+        height: 100%;
+        width: 40%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, rgba(127,127,127,.85), transparent);
+        animation: scanMove 1.1s ease-in-out infinite;
+      }
+      @keyframes scanMove {
+        0% { transform: translateX(-120%); }
+        100% { transform: translateX(250%); }
+      }
     </style>
   </head>
   <body>
@@ -138,6 +171,9 @@
       <div class="btnrow">
         <button id="copyProtocolBtn" class="smallbtn">Copy protocol</button>
         <button id="scanChatBtn" class="smallbtn">Scan chat</button>
+      </div>
+      <div id="scanProgress" class="progress" role="progressbar" aria-hidden="true">
+        <div class="progress-bar"></div>
       </div>
 
       <div id="toast" class="toast"></div>
@@ -189,6 +225,17 @@
         <div class="modal-actions">
           <button id="cancelSettings">Cancel</button>
           <button id="saveSettings" class="primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="protocolBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal wide">
+        <h3>Protocol JSON</h3>
+        <div id="protocolText" class="protocol-text" aria-label="Protocol JSON text"></div>
+        <div class="modal-actions">
+          <button id="protocolCloseBtn">Close</button>
+          <button id="protocolCopyBtn" class="primary">Copy Text</button>
         </div>
       </div>
     </div>
