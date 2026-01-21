@@ -14,6 +14,7 @@ const banner = document.getElementById("banner");
 
 const copyProtocolBtn = document.getElementById("copyProtocolBtn");
 const scanChatBtn = document.getElementById("scanChatBtn");
+const scanProgress = document.getElementById("scanProgress");
 
 const runListEl = document.getElementById("runList");
 const runEmptyEl = document.getElementById("runEmpty");
@@ -38,8 +39,13 @@ const modalBackdrop = document.getElementById("modalBackdrop");
 const delayInput = document.getElementById("delayInput");
 const cancelSettings = document.getElementById("cancelSettings");
 const saveSettings = document.getElementById("saveSettings");
+const protocolBackdrop = document.getElementById("protocolBackdrop");
+const protocolText = document.getElementById("protocolText");
+const protocolCloseBtn = document.getElementById("protocolCloseBtn");
+const protocolCopyBtn = document.getElementById("protocolCopyBtn");
 
 let protocol = null;
+let scanning = false;
 
 let state = {
   workflow_id: null,
@@ -144,7 +150,7 @@ function setPlaying(on) {
   recordBtn.disabled = state.playing;
   clearBtn.disabled = state.playing;
   copyProtocolBtn.disabled = state.playing;
-  scanChatBtn.disabled = state.playing;
+  scanChatBtn.disabled = state.playing || scanning;
 }
 
 function openSettings() {
@@ -156,6 +162,28 @@ function openSettings() {
 function closeSettings() {
   modalBackdrop.classList.remove("on");
   modalBackdrop.setAttribute("aria-hidden", "true");
+}
+
+function setScanning(on) {
+  scanning = !!on;
+  scanProgress.classList.toggle("on", scanning);
+  scanProgress.setAttribute("aria-hidden", scanning ? "false" : "true");
+  scanChatBtn.textContent = scanning ? "Scanning…" : "Scan chat";
+  scanChatBtn.disabled = scanning || state.playing;
+}
+
+async function openProtocolModal() {
+  if (!protocol) await loadProtocol();
+  protocolText.textContent = JSON.stringify(protocol, null, 2);
+  protocolCopyBtn.textContent = "Copy Text";
+  protocolBackdrop.classList.add("on");
+  protocolBackdrop.setAttribute("aria-hidden", "false");
+  protocolCopyBtn.focus();
+}
+
+function closeProtocolModal() {
+  protocolBackdrop.classList.remove("on");
+  protocolBackdrop.setAttribute("aria-hidden", "true");
 }
 
 function elHandleSvg() {
@@ -505,26 +533,22 @@ async function copyText(text) {
   }
 }
 
-async function copyProtocolToClipboard() {
+async function copyProtocolJson() {
   if (!protocol) await loadProtocol();
-
-  if (!state.workflow_id) {
-    state.workflow_id = `bai_${uid()}`;
+  const ok = await copyText(protocolText.textContent || "");
+  protocolCopyBtn.textContent = ok ? "Copied..." : "Copy failed";
+  clearTimeout(protocolCopyBtn.__reset);
+  protocolCopyBtn.__reset = setTimeout(() => {
+    protocolCopyBtn.textContent = "Copy Text";
+  }, 1400);
+  if (!ok) {
+    toast("Copy failed (clipboard blocked)");
   }
-
-  const prompt = String(protocol.bootstrap_prompt_template || "")
-    .replaceAll("{WORKFLOW_ID}", state.workflow_id);
-
-  const ok = await copyText(prompt);
-  state.awaiting_ack = true;
-  state.ready = false;
-  await saveState();
-  renderAll();
-
-  toast(ok ? "Protocol copied" : "Copy failed (clipboard blocked)");
 }
 
 async function scanChat() {
+  if (scanning) return;
+  setScanning(true);
   if (!protocol) await loadProtocol();
   if (!state.workflow_id) {
     state.workflow_id = `bai_${uid()}`;
@@ -533,55 +557,59 @@ async function scanChat() {
     await saveState();
   }
 
-  const resp = await chrome.runtime.sendMessage({
-    type: "BAI_SCAN_CHAT_ACTIVE_TAB",
-    payload: {
-      protocol: protocol.protocol,
-      handshake_lang: protocol.handshake_block_language,
-      handshake_prefix: protocol.handshake_line_prefix,
-      action_prefix: protocol.action_line_prefix,
-      ack_prefix: protocol.ack_line_prefix,
-      workflow_id: state.workflow_id
+  try {
+    const resp = await chrome.runtime.sendMessage({
+      type: "BAI_SCAN_CHAT_ACTIVE_TAB",
+      payload: {
+        protocol: protocol.protocol,
+        handshake_lang: protocol.handshake_block_language,
+        handshake_prefix: protocol.handshake_line_prefix,
+        action_prefix: protocol.action_line_prefix,
+        ack_prefix: protocol.ack_line_prefix,
+        workflow_id: state.workflow_id
+      }
+    });
+
+    if (!resp?.ok) {
+      toast(resp?.error || "Scan failed");
+      return;
     }
-  });
 
-  if (!resp?.ok) {
-    toast(resp?.error || "Scan failed");
-    return;
-  }
+    const result = resp.result || {};
+    const handshake = result.handshake || null;
+    const actions = Array.isArray(result.actions) ? result.actions : [];
+    const ackSeen = !!result.ack_seen;
 
-  const result = resp.result || {};
-  const handshake = result.handshake || null;
-  const actions = Array.isArray(result.actions) ? result.actions : [];
-  const ackSeen = !!result.ack_seen;
+    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
+      state.awaiting_ack = true;
+      state.ready = false;
+    } else if (ackSeen) {
+      state.awaiting_ack = false;
+      state.ready = true;
+    } else if (handshake) {
+      state.awaiting_ack = false;
+      state.ready = true;
+    }
 
-  if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
-    state.awaiting_ack = true;
-    state.ready = false;
-  } else if (ackSeen) {
-    state.awaiting_ack = false;
-    state.ready = true;
-  } else if (handshake) {
-    state.awaiting_ack = false;
-    state.ready = true;
-  }
+    const existing = new Set(state.ai_actions.map(a => a.key));
+    for (const a of actions) {
+      if (!a?.key || existing.has(a.key)) continue;
+      state.ai_actions.push(a);
+      existing.add(a.key);
+    }
 
-  const existing = new Set(state.ai_actions.map(a => a.key));
-  for (const a of actions) {
-    if (!a?.key || existing.has(a.key)) continue;
-    state.ai_actions.push(a);
-    existing.add(a.key);
-  }
+    await saveState();
+    renderAll();
 
-  await saveState();
-  renderAll();
-
-  if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
-    const ackLine = `${protocol.ack_line_prefix} {"protocol":"${protocol.protocol}","workflow_id":"${state.workflow_id}","state":"extension_acknowledged","ack_nonce":"${uid()}"}`;
-    const ok = await copyText(ackLine);
-    toast(ok ? "ACK copied (paste into chat)" : "Copy failed (clipboard blocked)");
-  } else {
-    toast(`Scan: ${actions.length} action(s)`);
+    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
+      const ackLine = `${protocol.ack_line_prefix} {"protocol":"${protocol.protocol}","workflow_id":"${state.workflow_id}","state":"extension_acknowledged","ack_nonce":"${uid()}"}`;
+      const ok = await copyText(ackLine);
+      toast(ok ? "ACK copied (paste into chat)" : "Copy failed (clipboard blocked)");
+    } else {
+      toast(`Scan: ${actions.length} action(s)`);
+    }
+  } finally {
+    setScanning(false);
   }
 }
 
@@ -636,7 +664,7 @@ clearBtn.addEventListener("click", async () => {
   toast("Cleared");
 });
 
-copyProtocolBtn.addEventListener("click", copyProtocolToClipboard);
+copyProtocolBtn.addEventListener("click", openProtocolModal);
 scanChatBtn.addEventListener("click", scanChat);
 
 /* Settings */
@@ -645,6 +673,11 @@ cancelSettings.addEventListener("click", closeSettings);
 modalBackdrop.addEventListener("click", (e) => {
   if (e.target === modalBackdrop) closeSettings();
 });
+protocolBackdrop.addEventListener("click", (e) => {
+  if (e.target === protocolBackdrop) closeProtocolModal();
+});
+protocolCloseBtn.addEventListener("click", closeProtocolModal);
+protocolCopyBtn.addEventListener("click", copyProtocolJson);
 saveSettings.addEventListener("click", async () => {
   const v = clampNum(Number(delayInput.value), 0.1, 10);
   state.delaySec = round1(v);

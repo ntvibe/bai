@@ -1,4 +1,3 @@
-// protocol.json
 {
   "protocol": "BAI/0.2",
   "handshake_block_language": "bai",
