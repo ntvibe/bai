@@ -332,70 +332,79 @@ function parseJsonLine(prefix, line) {
   }
 }
 
-function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, ack_prefix, workflow_id }) {
+function scanChat({ protocol, handshake_lang, handshake_prefix, action_prefix, ack_prefix, ack_state, workflow_id }) {
   const assistantNodes = getAssistantMessageNodes();
 
   const actions = [];
   let handshake = null;
   let ackSeen = false;
 
-  const actionPfx = String(action_prefix || "BAI_ACTION");
-  const ackPfx = String(ack_prefix || "BAI_ACK");
-  const hsPfx = String(handshake_prefix || "BAI_HANDSHAKE");
-  const hsLang = String(handshake_lang || "bai").toLowerCase();
+  const actionPfx = action_prefix ? String(action_prefix) : null;
+  const ackPfx = ack_prefix ? String(ack_prefix) : null;
+  const ackState = ack_state ? String(ack_state) : null;
+  const hsPfx = handshake_prefix ? String(handshake_prefix) : null;
+  const hsLang = handshake_lang ? String(handshake_lang).toLowerCase() : null;
 
   for (const node of assistantNodes) {
-    const codes = Array.from(node.querySelectorAll("pre code"));
-    for (const c of codes) {
-      const lang = detectCodeBlockLanguage(c);
-      if (lang !== hsLang) continue;
-      const raw = (c.textContent || "").trim();
-      if (!raw) continue;
-      try {
-        const obj = JSON.parse(raw);
-        if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
-          if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
-        }
-      } catch (_) {}
+    if (hsLang) {
+      const codes = Array.from(node.querySelectorAll("pre code"));
+      for (const c of codes) {
+        const lang = detectCodeBlockLanguage(c);
+        if (lang !== hsLang) continue;
+        const raw = (c.textContent || "").trim();
+        if (!raw) continue;
+        try {
+          const obj = JSON.parse(raw);
+          if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
+            if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
+          }
+        } catch (_) {}
+      }
     }
 
     const text = (node.innerText || node.textContent || "").split("\n").map(s => s.trim()).filter(Boolean);
 
     for (const line of text) {
-      const ackParsed = parseJsonLine(ackPfx, line);
-      if (ackParsed?.obj) {
-        const obj = ackParsed.obj;
-        if (obj?.protocol === protocol && obj?.workflow_id && (!workflow_id || obj.workflow_id === workflow_id)) {
-          if (obj.state === "extension_acknowledged") ackSeen = true;
+      if (ackPfx && ackState) {
+        const ackParsed = parseJsonLine(ackPfx, line);
+        if (ackParsed?.obj) {
+          const obj = ackParsed.obj;
+          if (obj?.protocol === protocol && obj?.workflow_id && (!workflow_id || obj.workflow_id === workflow_id)) {
+            if (obj.state === ackState) ackSeen = true;
+          }
         }
       }
 
-      const hsParsed = parseJsonLine(hsPfx, line);
-      if (hsParsed?.obj) {
-        const obj = hsParsed.obj;
-        if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
-          if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
+      if (hsPfx) {
+        const hsParsed = parseJsonLine(hsPfx, line);
+        if (hsParsed?.obj) {
+          const obj = hsParsed.obj;
+          if (obj?.protocol === protocol && obj?.workflow_id && obj?.state) {
+            if (!workflow_id || obj.workflow_id === workflow_id) handshake = obj;
+          }
         }
       }
 
-      const actionParsed = parseJsonLine(actionPfx, line);
-      if (actionParsed?.obj) {
-        const obj = actionParsed.obj;
-        if (!obj || typeof obj !== "object") continue;
-        if (obj.protocol !== protocol) continue;
-        if (!obj.workflow_id || !obj.type || obj.action_id == null) continue;
-        if (workflow_id && obj.workflow_id !== workflow_id) continue;
+      if (actionPfx) {
+        const actionParsed = parseJsonLine(actionPfx, line);
+        if (actionParsed?.obj) {
+          const obj = actionParsed.obj;
+          if (!obj || typeof obj !== "object") continue;
+          if (obj.protocol !== protocol) continue;
+          if (!obj.workflow_id || !obj.type || obj.action_id == null) continue;
+          if (workflow_id && obj.workflow_id !== workflow_id) continue;
 
-        const key = `${obj.workflow_id}:${obj.action_id}:${obj.type}`;
-        actions.push({
-          key,
-          protocol: obj.protocol,
-          workflow_id: obj.workflow_id,
-          action_id: obj.action_id,
-          type: obj.type,
-          payload: obj.payload || {},
-          raw: actionParsed.raw
-        });
+          const key = `${obj.workflow_id}:${obj.action_id}:${obj.type}`;
+          actions.push({
+            key,
+            protocol: obj.protocol,
+            workflow_id: obj.workflow_id,
+            action_id: obj.action_id,
+            type: obj.type,
+            payload: obj.payload || {},
+            raw: actionParsed.raw
+          });
+        }
       }
     }
   }

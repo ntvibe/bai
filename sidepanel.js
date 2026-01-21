@@ -3,7 +3,7 @@
 // 1) Load unpacked extension and open a ChatGPT tab + side panel.
 // 2) Click “Copy protocol” and paste into chat.
 // 3) Click “Scan chat”; if ACK is copied, paste it into chat.
-// 4) Ask AI for BAI_ACTION lines, scan again, add actions to run list, and play.
+// 4) Ask AI for action lines (see PROTOCOL.md), scan again, add actions to run list, and play.
 // 5) Record a click and confirm only one recorded item appears.
 const STORAGE_KEY = "bai_state_v2";
 
@@ -39,12 +39,9 @@ const modalBackdrop = document.getElementById("modalBackdrop");
 const delayInput = document.getElementById("delayInput");
 const cancelSettings = document.getElementById("cancelSettings");
 const saveSettings = document.getElementById("saveSettings");
-const protocolBackdrop = document.getElementById("protocolBackdrop");
-const protocolText = document.getElementById("protocolText");
-const protocolCloseBtn = document.getElementById("protocolCloseBtn");
-const protocolCopyBtn = document.getElementById("protocolCopyBtn");
 
-let protocol = null;
+let protocolDoc = null;
+let protocolConfig = null;
 let scanning = false;
 
 let state = {
@@ -86,10 +83,87 @@ function toast(msg) {
   toastEl.__t = setTimeout(() => toastEl.classList.remove("on"), 1800);
 }
 
-async function loadProtocol() {
-  const url = chrome.runtime.getURL("protocol.json");
+function normalizeLines(text) {
+  return text.replace(/\r\n/g, "\n").split("\n");
+}
+
+function findSectionRange(lines, header) {
+  const headerIndex = lines.findIndex(line => line.trim() === header);
+  if (headerIndex === -1) return null;
+  let end = lines.length;
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    if (lines[i].trim().startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return { start: headerIndex + 1, end };
+}
+
+function findFencedBlock(lines, start, end, lang) {
+  const fence = `\`\`\`${lang}`;
+  let blockStart = -1;
+  for (let i = start; i < end; i++) {
+    if (lines[i].trim().startsWith(fence)) {
+      blockStart = i;
+      break;
+    }
+  }
+  if (blockStart === -1) return null;
+  let blockEnd = -1;
+  for (let i = blockStart + 1; i < end; i++) {
+    if (lines[i].trim() === "```") {
+      blockEnd = i;
+      break;
+    }
+  }
+  if (blockEnd === -1) return null;
+  return { start: blockStart, end: blockEnd };
+}
+
+async function loadProtocolDoc() {
+  if (protocolDoc) return protocolDoc;
+  const url = chrome.runtime.getURL("PROTOCOL.md");
   const res = await fetch(url);
-  protocol = await res.json();
+  if (!res.ok) {
+    throw new Error(`Failed to load protocol (${res.status})`);
+  }
+  protocolDoc = await res.text();
+  return protocolDoc;
+}
+
+function parseProtocolConfigFromDoc(docText) {
+  const lines = normalizeLines(docText);
+  const section = findSectionRange(lines, "## Extension config (machine-readable)");
+  if (!section) throw new Error("Protocol config section not found.");
+  const block = findFencedBlock(lines, section.start, section.end, "json");
+  if (!block) throw new Error("Protocol config JSON block not found.");
+  const jsonText = lines.slice(block.start + 1, block.end).join("\n");
+  return JSON.parse(jsonText);
+}
+
+async function loadProtocolConfig() {
+  if (protocolConfig) return protocolConfig;
+  const doc = await loadProtocolDoc();
+  protocolConfig = parseProtocolConfigFromDoc(doc);
+  return protocolConfig;
+}
+
+function uuidV4() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function extractCopyBlock(docText) {
+  const lines = normalizeLines(docText);
+  const section = findSectionRange(lines, "## COPY_THIS_TO_CHATGPT");
+  if (!section) throw new Error("COPY_THIS_TO_CHATGPT section not found.");
+  const block = findFencedBlock(lines, section.start, section.end, "bai");
+  if (!block) throw new Error("BAI code block not found.");
+  return lines.slice(block.start, block.end + 1).join("\n");
 }
 
 async function loadState() {
@@ -170,20 +244,6 @@ function setScanning(on) {
   scanProgress.setAttribute("aria-hidden", scanning ? "false" : "true");
   scanChatBtn.textContent = scanning ? "Scanning…" : "Scan chat";
   scanChatBtn.disabled = scanning || state.playing;
-}
-
-async function openProtocolModal() {
-  if (!protocol) await loadProtocol();
-  protocolText.textContent = JSON.stringify(protocol, null, 2);
-  protocolCopyBtn.textContent = "Copy Text";
-  protocolBackdrop.classList.add("on");
-  protocolBackdrop.setAttribute("aria-hidden", "false");
-  protocolCopyBtn.focus();
-}
-
-function closeProtocolModal() {
-  protocolBackdrop.classList.remove("on");
-  protocolBackdrop.setAttribute("aria-hidden", "true");
 }
 
 function elHandleSvg() {
@@ -533,39 +593,54 @@ async function copyText(text) {
   }
 }
 
-async function copyProtocolJson() {
-  if (!protocol) await loadProtocol();
-  const ok = await copyText(protocolText.textContent || "");
-  protocolCopyBtn.textContent = ok ? "Copied..." : "Copy failed";
-  clearTimeout(protocolCopyBtn.__reset);
-  protocolCopyBtn.__reset = setTimeout(() => {
-    protocolCopyBtn.textContent = "Copy Text";
-  }, 1400);
-  if (!ok) {
-    toast("Copy failed (clipboard blocked)");
+async function copyProtocolFromMarkdown() {
+  copyProtocolBtn.disabled = true;
+  copyProtocolBtn.textContent = "Copying…";
+  try {
+    const doc = await loadProtocolDoc();
+    const block = extractCopyBlock(doc);
+    const text = block.replaceAll("{{RANDOM_UUID}}", uuidV4());
+    const ok = await copyText(text);
+    copyProtocolBtn.textContent = ok ? "Copied ✅" : "Copy failed";
+    if (ok) {
+      toast("Copied ✅");
+    } else {
+      toast("Copy failed (clipboard blocked)");
+    }
+  } catch (e) {
+    console.warn(e);
+    copyProtocolBtn.textContent = "Copy failed";
+    toast(e?.message || "Copy failed");
+  } finally {
+    clearTimeout(copyProtocolBtn.__reset);
+    copyProtocolBtn.__reset = setTimeout(() => {
+      copyProtocolBtn.textContent = "Copy protocol";
+      copyProtocolBtn.disabled = false;
+    }, 1600);
   }
 }
 
 async function scanChat() {
   if (scanning) return;
   setScanning(true);
-  if (!protocol) await loadProtocol();
-  if (!state.workflow_id) {
-    state.workflow_id = `bai_${uid()}`;
-    state.awaiting_ack = true;
-    state.ready = false;
-    await saveState();
-  }
-
   try {
+    const config = await loadProtocolConfig();
+    if (!state.workflow_id) {
+      state.workflow_id = `bai_${uid()}`;
+      state.awaiting_ack = true;
+      state.ready = false;
+      await saveState();
+    }
+
     const resp = await chrome.runtime.sendMessage({
       type: "BAI_SCAN_CHAT_ACTIVE_TAB",
       payload: {
-        protocol: protocol.protocol,
-        handshake_lang: protocol.handshake_block_language,
-        handshake_prefix: protocol.handshake_line_prefix,
-        action_prefix: protocol.action_line_prefix,
-        ack_prefix: protocol.ack_line_prefix,
+        protocol: config.protocol,
+        handshake_lang: config.handshake_block_language,
+        handshake_prefix: config.handshake_line_prefix,
+        action_prefix: config.action_line_prefix,
+        ack_prefix: config.ack_line_prefix,
+        ack_state: config.ack_state,
         workflow_id: state.workflow_id
       }
     });
@@ -580,7 +655,7 @@ async function scanChat() {
     const actions = Array.isArray(result.actions) ? result.actions : [];
     const ackSeen = !!result.ack_seen;
 
-    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
+    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === config.handshake_state_awaiting_ack && !ackSeen) {
       state.awaiting_ack = true;
       state.ready = false;
     } else if (ackSeen) {
@@ -601,8 +676,8 @@ async function scanChat() {
     await saveState();
     renderAll();
 
-    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
-      const ackLine = `${protocol.ack_line_prefix} {"protocol":"${protocol.protocol}","workflow_id":"${state.workflow_id}","state":"extension_acknowledged","ack_nonce":"${uid()}"}`;
+    if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === config.handshake_state_awaiting_ack && !ackSeen) {
+      const ackLine = `${config.ack_line_prefix} {"protocol":"${config.protocol}","workflow_id":"${state.workflow_id}","state":"${config.ack_state}","ack_nonce":"${uid()}"}`;
       const ok = await copyText(ackLine);
       toast(ok ? "ACK copied (paste into chat)" : "Copy failed (clipboard blocked)");
     } else {
@@ -664,7 +739,7 @@ clearBtn.addEventListener("click", async () => {
   toast("Cleared");
 });
 
-copyProtocolBtn.addEventListener("click", openProtocolModal);
+copyProtocolBtn.addEventListener("click", copyProtocolFromMarkdown);
 scanChatBtn.addEventListener("click", scanChat);
 
 /* Settings */
@@ -673,11 +748,6 @@ cancelSettings.addEventListener("click", closeSettings);
 modalBackdrop.addEventListener("click", (e) => {
   if (e.target === modalBackdrop) closeSettings();
 });
-protocolBackdrop.addEventListener("click", (e) => {
-  if (e.target === protocolBackdrop) closeProtocolModal();
-});
-protocolCloseBtn.addEventListener("click", closeProtocolModal);
-protocolCopyBtn.addEventListener("click", copyProtocolJson);
 saveSettings.addEventListener("click", async () => {
   const v = clampNum(Number(delayInput.value), 0.1, 10);
   state.delaySec = round1(v);
@@ -711,6 +781,6 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 /* Init */
 (async () => {
-  await loadProtocol();
+  await loadProtocolConfig();
   await loadState();
 })();

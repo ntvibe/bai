@@ -1,14 +1,30 @@
 # BAI/0.3 Protocol
 
-## Protocol JSON (BAI/0.3)
+## COPY_THIS_TO_CHATGPT
 
-See `protocol.json` for the canonical, machine-readable spec.
+```bai
+{"protocol":"BAI/0.3","workflow_id":"{{RANDOM_UUID}}","kind":"handshake","state":"awaiting_extension_ack","capabilities":["action_lines"]}
+```
+
+## Extension config (machine-readable)
+
+```json
+{
+  "protocol": "BAI/0.3",
+  "handshake_block_language": "bai",
+  "handshake_line_prefix": null,
+  "action_line_prefix": "BAI_ACTION",
+  "ack_line_prefix": "BAI_ACK",
+  "handshake_state_awaiting_ack": "awaiting_extension_ack",
+  "ack_state": "extension_acknowledged"
+}
+```
 
 ## Worked examples
 
 ### Handshake (assistant)
 
-```bai
+```json
 {"protocol":"BAI/0.3","workflow_id":"wf_123","kind":"handshake","state":"awaiting_extension_ack","capabilities":["action_lines"]}
 ```
 
