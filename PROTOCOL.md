@@ -2,6 +2,14 @@
 
 ## COPY_THIS_TO_CHATGPT
 
+Use this protocol to talk to the browser extension. The extension will scan the full chat transcript (both user and assistant messages) for:
+
+- The initial handshake JSON inside the `bai` code block below.
+- Any `BAI_ACK { ... }` lines that acknowledge the handshake.
+- Any `BAI_ACTION { ... }` lines that describe actions to execute.
+
+When you paste this message into chat, the extension looks for the handshake block to establish the workflow ID. After you send the handshake, wait for the extension to respond with an ACK line, then continue by responding with action lines. The extension keeps scanning the page for those exact prefixes, so keep the lines unwrapped and on their own lines.
+
 ```bai
 {"protocol":"BAI/0.3","workflow_id":"{{RANDOM_UUID}}","kind":"handshake","state":"awaiting_extension_ack","capabilities":["action_lines"]}
 ```
