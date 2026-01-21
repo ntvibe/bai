@@ -1,4 +1,10 @@
 // sidepanel.js
+// Testing:
+// 1) Load unpacked extension and open a ChatGPT tab + side panel.
+// 2) Click “Copy protocol” and paste into chat.
+// 3) Click “Scan chat”; if ACK is copied, paste it into chat.
+// 4) Ask AI for BAI_ACTION lines, scan again, add actions to run list, and play.
+// 5) Record a click and confirm only one recorded item appears.
 const STORAGE_KEY = "bai_state_v2";
 
 const recordBtn = document.getElementById("recordBtn");
@@ -49,6 +55,10 @@ let state = {
   ai_actions: [], // { key, protocol, workflow_id, action_id, type, payload, raw }
   run_list: []    // { id, source, type, label, payload }
 };
+
+let lastRecordedSelector = null;
+let lastRecordedAt = 0;
+const recordFingerprints = new Map();
 
 function clampNum(n, min, max) {
   if (!Number.isFinite(n)) return min;
@@ -545,8 +555,16 @@ async function scanChat() {
   const actions = Array.isArray(result.actions) ? result.actions : [];
   const ackSeen = !!result.ack_seen;
 
-  state.awaiting_ack = !!handshake && handshake.state === "awaiting_extension_ack" && !ackSeen;
-  state.ready = ackSeen || (!!handshake && handshake.state !== "awaiting_extension_ack");
+  if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
+    state.awaiting_ack = true;
+    state.ready = false;
+  } else if (ackSeen) {
+    state.awaiting_ack = false;
+    state.ready = true;
+  } else if (handshake) {
+    state.awaiting_ack = false;
+    state.ready = true;
+  }
 
   const existing = new Set(state.ai_actions.map(a => a.key));
   for (const a of actions) {
@@ -558,14 +576,35 @@ async function scanChat() {
   await saveState();
   renderAll();
 
-  // If handshake is awaiting, auto-copy ACK line to clipboard for convenience
-  if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack") {
+  if (handshake && handshake.workflow_id === state.workflow_id && handshake.state === "awaiting_extension_ack" && !ackSeen) {
     const ackLine = `${protocol.ack_line_prefix} {"protocol":"${protocol.protocol}","workflow_id":"${state.workflow_id}","state":"extension_acknowledged","ack_nonce":"${uid()}"}`;
     const ok = await copyText(ackLine);
-    toast(ok ? "ACK copied (paste into chat)" : "ACK ready (copy blocked)");
+    toast(ok ? "ACK copied (paste into chat)" : "Copy failed (clipboard blocked)");
   } else {
     toast(`Scan: ${actions.length} action(s)`);
   }
+}
+
+function isDuplicateRecorded(payload) {
+  const now = Date.now();
+  if (lastRecordedSelector && lastRecordedSelector === payload.selector && (now - lastRecordedAt) < 400) {
+    return true;
+  }
+
+  const rounded = Math.round(now / 200);
+  const fingerprint = `${payload.selector}|${payload.label || ""}|${payload.url || ""}|${rounded}`;
+  const last = recordFingerprints.get(fingerprint);
+  if (last && (now - last) < 600) return true;
+
+  recordFingerprints.set(fingerprint, now);
+  lastRecordedSelector = payload.selector;
+  lastRecordedAt = now;
+
+  for (const [key, ts] of recordFingerprints.entries()) {
+    if (now - ts > 2000) recordFingerprints.delete(key);
+  }
+
+  return false;
 }
 
 /* UI events */
@@ -621,9 +660,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   const payload = msg.payload || {};
   if (!payload.selector) return;
 
-  // Deduplicate: if last recorded selector matches and is very recent, ignore.
-  const last = state.recorded[state.recorded.length - 1];
-  if (last && last.selector === payload.selector && (Date.now() - (last.ts || 0)) < 400) return;
+  if (isDuplicateRecorded(payload)) return;
 
   state.recorded.push({
     id: uid(),
