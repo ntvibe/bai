@@ -1,0 +1,12 @@
+// manifest.json
+{
+  "manifest_version": 3,
+  "name": "bai",
+  "version": "0.2.1",
+  "description": "BAI sidebar: record elements, parse AI actions from chat, build a run list, and play clicks.",
+  "permissions": ["sidePanel", "tabs", "scripting", "storage", "clipboardWrite"],
+  "host_permissions": ["<all_urls>"],
+  "action": { "default_title": "Open bai" },
+  "background": { "service_worker": "sw.js" },
+  "side_panel": { "default_path": "sidepanel.html" }
+}

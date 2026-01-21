@@ -1,0 +1,198 @@
+<!-- sidepanel.html -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>bai</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 12px; }
+      .card { border: 1px solid rgba(127,127,127,.35); border-radius: 14px; padding: 12px; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+      h2 { margin: 0; font-size: 16px; }
+      .muted { opacity: .8; font-size: 12px; }
+
+      .pillrow { display:flex; gap:8px; flex-wrap: wrap; margin: 10px 0 0; }
+      .pill { border: 1px solid rgba(127,127,127,.35); border-radius: 999px; padding: 6px 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 8px; }
+      .dot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; opacity: .7; }
+
+      .btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+      button {
+        border-radius: 12px;
+        border: 1px solid rgba(127,127,127,.45);
+        background: transparent;
+        padding: 10px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover { filter: brightness(1.06); }
+      button.primary { font-weight: 650; }
+      button[disabled] { opacity: .5; cursor: not-allowed; }
+      .iconbtn { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border-radius: 12px; }
+      .iconbtn svg { width: 16px; height: 16px; }
+
+      .toast {
+        margin-top: 8px;
+        border: 1px solid rgba(127,127,127,.35);
+        border-radius: 12px;
+        padding: 8px 10px;
+        font-size: 12px;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 140ms ease, transform 140ms ease;
+        pointer-events: none;
+      }
+      .toast.on { opacity: .95; transform: translateY(0); }
+
+      .banner {
+        border: 1px dashed rgba(127,127,127,.55);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 12px;
+        opacity: .95;
+        display: none;
+        margin: 10px 0 0;
+      }
+      .banner.on { display: block; }
+
+      .section { margin-top: 14px; }
+      .section h3 { margin: 0 0 6px; font-size: 13px; opacity: .9; }
+      .section .subrow { display:flex; gap:8px; align-items:center; justify-content: space-between; }
+      .section .subrow .left { display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+
+      .list { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+      .empty { padding: 8px 0 0; font-size: 12px; opacity: .8; }
+
+      .item {
+        display: grid;
+        grid-template-columns: 18px 1fr auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid rgba(127,127,127,.35);
+        border-radius: 14px;
+        padding: 10px 10px;
+        user-select: none;
+      }
+      .item[draggable="true"] { cursor: grab; }
+      .handle { width: 18px; height: 18px; opacity: .7; display: grid; place-items: center; }
+      .handle svg { width: 14px; height: 14px; }
+
+      .label { font-size: 12.5px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .meta { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 11px; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+      .item-actions { display: flex; gap: 6px; align-items: center; }
+
+      /* Settings modal */
+      .modal-backdrop {
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,.35);
+        display: none; align-items: center; justify-content: center;
+        z-index: 999999; padding: 12px;
+      }
+      .modal-backdrop.on { display: flex; }
+      .modal {
+        width: min(380px, 100%);
+        border: 1px solid rgba(127,127,127,.35);
+        border-radius: 16px;
+        background: Canvas;
+        padding: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.25);
+      }
+      .modal h3 { margin: 0 0 8px; font-size: 14px; }
+      .field { display: grid; gap: 6px; margin: 10px 0; }
+      .field label { font-size: 12px; opacity: .85; }
+      .field input[type="number"]{
+        width: 140px;
+        border-radius: 12px;
+        border: 1px solid rgba(127,127,127,.45);
+        background: transparent;
+        padding: 10px 12px;
+        font: inherit;
+      }
+      .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+      .smallbtn { padding: 8px 10px; border-radius: 12px; font-size: 12px; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 11px; opacity: .8; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="topbar">
+        <div>
+          <h2>bai</h2>
+          <div class="muted">Record → merge AI actions → run list → play clicks</div>
+        </div>
+        <button id="settingsBtn" class="iconbtn" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4l-6.6 6.6a2 2 0 0 0 2.8 2.8l6.6-6.6a4 4 0 0 0 5.4-5.4l-2 2-3-3 2-2z"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="pillrow">
+        <span class="pill"><span id="statusDot" class="dot"></span><span id="statusText">Not initialized</span></span>
+        <span class="pill"><span class="dot"></span><span class="mono" id="workflowText">workflow: —</span></span>
+      </div>
+
+      <div class="btnrow">
+        <button id="copyProtocolBtn" class="smallbtn">Copy protocol</button>
+        <button id="scanChatBtn" class="smallbtn">Scan chat</button>
+      </div>
+
+      <div id="toast" class="toast"></div>
+
+      <div class="btnrow">
+        <button id="recordBtn" class="primary">Record click</button>
+        <button id="playBtn">Play</button>
+        <button id="clearBtn" title="Clear run list">Clear</button>
+      </div>
+
+      <div id="banner" class="banner">🖱️ Click an element on the page… it will be recorded.</div>
+
+      <div class="section">
+        <div class="subrow">
+          <h3>Run list</h3>
+          <div class="left"><span class="muted" id="runCount">0 items</span></div>
+        </div>
+        <div id="runList" class="list"></div>
+        <div id="runEmpty" class="empty">No actions in the run list yet.</div>
+      </div>
+
+      <div class="section">
+        <div class="subrow">
+          <h3>AI actions detected</h3>
+          <div class="left"><span class="muted" id="aiCount">0 items</span></div>
+        </div>
+        <div id="aiList" class="list"></div>
+        <div id="aiEmpty" class="empty">No AI actions detected. Use “Copy protocol”, paste into chat, then “Scan chat”.</div>
+      </div>
+
+      <div class="section">
+        <div class="subrow">
+          <h3>Recorded elements</h3>
+          <div class="left"><span class="muted" id="recCount">0 items</span></div>
+        </div>
+        <div id="recList" class="list"></div>
+        <div id="recEmpty" class="empty">No recorded elements yet.</div>
+      </div>
+    </div>
+
+    <div id="modalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal">
+        <h3>Settings</h3>
+        <div class="field">
+          <label for="delayInput">Delay between actions (seconds)</label>
+          <input id="delayInput" type="number" min="0.1" max="10" step="0.1" />
+          <div class="muted">0.1s increments, max 10s.</div>
+        </div>
+        <div class="modal-actions">
+          <button id="cancelSettings">Cancel</button>
+          <button id="saveSettings" class="primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

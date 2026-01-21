@@ -1,0 +1,9 @@
+// protocol.json
+{
+  "protocol": "BAI/0.2",
+  "handshake_block_language": "bai",
+  "handshake_line_prefix": "BAI_HANDSHAKE",
+  "action_line_prefix": "BAI_ACTION",
+  "ack_line_prefix": "BAI_ACK",
+  "bootstrap_prompt_template": "BAI PROTOCOL INIT (BAI/0.2)\n\nWORKFLOW_ID: {WORKFLOW_ID}\n\nRules (STRICT):\n1) First assistant reply MUST include exactly ONE `bai` code block that contains a single JSON object:\n   {\"protocol\":\"BAI/0.2\",\"workflow_id\":\"{WORKFLOW_ID}\",\"state\":\"awaiting_extension_ack\",\"capabilities\":[\"action_lines\"],\"notes\":\"Do not output actions until ACK.\"}\n\n2) After the `bai` block, the assistant must output NOTHING else except when asked for actions.\n\n3) When producing actions, output one action per line, and ONLY these lines (no commentary):\n   BAI_ACTION {\"protocol\":\"BAI/0.2\",\"workflow_id\":\"{WORKFLOW_ID}\",\"action_id\":1,\"type\":\"click\",\"payload\":{\"selector\":\"...\"}}\n   - action_id starts at 1 and increments by 1.\n\n4) The extension will ACK with a single line:\n   BAI_ACK {\"protocol\":\"BAI/0.2\",\"workflow_id\":\"{WORKFLOW_ID}\",\"state\":\"extension_acknowledged\",\"ack_nonce\":\"...\"}\n\n5) If missing info, ask ONE short question (and do NOT output BAI_ACTION lines).\n\nAction types:\n- click: payload {\"selector\":\"...\"}\n- input_text: payload {\"selector\":\"...\",\"text\":\"...\"}\n- wait: payload {\"ms\":800}\n- scroll: payload {\"y\":600}\n"
+}
