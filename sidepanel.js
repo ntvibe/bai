@@ -100,6 +100,19 @@ function findSectionRange(lines, header) {
   return { start: headerIndex + 1, end };
 }
 
+function extractSectionWithHeader(lines, header) {
+  const headerIndex = lines.findIndex(line => line.trim() === header);
+  if (headerIndex === -1) return null;
+  let end = lines.length;
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    if (lines[i].trim().startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(headerIndex, end);
+}
+
 function findFencedBlock(lines, start, end, lang) {
   const fence = `\`\`\`${lang}`;
   let blockStart = -1;
@@ -158,7 +171,10 @@ function uuidV4() {
 }
 
 function prepareProtocolCopy(docText, workflowId) {
-  const replaced = docText.replaceAll("{{RANDOM_UUID}}", workflowId);
+  const lines = normalizeLines(docText);
+  const sectionLines = extractSectionWithHeader(lines, "## COPY_THIS_TO_CHATGPT");
+  const rawText = sectionLines ? sectionLines.join("\n") : docText;
+  const replaced = rawText.replaceAll("{{RANDOM_UUID}}", workflowId);
   return replaced.trim();
 }
 
