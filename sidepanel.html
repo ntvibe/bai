@@ -19,7 +19,6 @@
         <div class="session-meta">
           session: <span id="session-key" class="mono-inline">Loading…</span>
         </div>
-        <div class="session-meta" id="chat-tab-status">chat tab: not set</div>
         <p class="subtitle">MVP side panel</p>
       </header>
 
@@ -36,6 +35,9 @@
         <div class="button-row">
           <button id="copy-context" type="button">Copy</button>
           <button id="refresh-context" type="button">Refresh</button>
+          <button id="get-text" type="button">Get Text</button>
+          <button id="scan-page" type="button">Scan Page</button>
+          <button id="clear-evidence" type="button">Clear Evidence</button>
         </div>
       </section>
 
@@ -48,13 +50,7 @@
         ></textarea>
         <div class="button-row">
           <button id="parse-action" type="button">Parse</button>
-          <button id="scan-action" type="button">Scan</button>
-          <label class="toggle">
-            <input id="auto-scan-toggle" type="checkbox" checked />
-            <span>Auto-scan</span>
-          </label>
         </div>
-        <div id="scan-status" class="status-text">Last scan: never</div>
         <div id="action-queue" class="queue"></div>
       </section>
     </main>

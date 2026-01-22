@@ -1,6 +1,6 @@
 # bAI Chrome Extension (MVP)
 
-This repository contains a Chrome MV3 extension for the bAI MVP. It opens a Side Panel, shows the current session key, generates canonical `!baictx` messages, and parses inbound `!baiact` lines into a visible action queue. The MVP is planning-only and does not execute browser actions. The extension can also bind to a chat tab to automatically scan AI responses from the page DOM.
+This repository contains a Chrome MV3 extension for the bAI MVP. It opens a Side Panel, shows the current session key, generates canonical `!baictx` messages, and parses inbound `!baiact` lines into a visible action queue. The MVP is planning-only and does not execute browser actions. It can also capture evidence (selection, text excerpt, and a compact DOM scan) from the active tab to bundle with the outgoing message.
 
 ## Load the extension (unpacked)
 
@@ -12,19 +12,25 @@ This repository contains a Chrome MV3 extension for the bAI MVP. It opens a Side
 ## Manual MVP checks
 
 ### Initialization prompt + connection status
-1. Open a `chatgpt.com` conversation tab.
-2. In the Side Panel, click **Copy init prompt**. This binds the current tab as the chat tab and copies the init prompt.
+1. Open any chat tab in your preferred AI.
+2. In the Side Panel, click **Copy init prompt**.
 3. Paste the prompt as the **first message** in the chat.
 4. Confirm the AI replies with a line like `!baisession {"session_key":"<SESSION_KEY>"}`.
-5. Without manual paste, wait a few seconds (or click **Scan**) and confirm the status dot shows **Connected**.
-6. Ask the AI to output an action line like `!baiact000001 {"v":1,"t":1,"a":"CTX","s":"","x":""}`.
-7. Click **Scan** (or wait for auto-scan) and confirm the action queue populates.
-8. Switch to another tab and back; the side panel should stay open and the chat tab id should remain set for the session.
+5. Paste that reply into the Action input and click **Parse**.
+6. Confirm the status dot shows **Connected**.
 
 ### Canonical context
 1. Switch tabs and observe the **Message for AI** line update.
 2. Click **Refresh** to regenerate the `!baictx` line.
 3. Use **Copy** to copy the line for pasting into an AI.
+
+### Evidence capture
+1. Open any website tab, then open the bAI Side Panel.
+2. Click **Get Text** and confirm the Message for AI bundle includes a `---TEXT---` block.
+3. Click **Scan Page** and confirm the bundle includes a `---SCAN---` block.
+4. Switch tabs and confirm evidence is per-tab (does not leak between tabs).
+5. Click **Clear Evidence** and confirm the bundle removes evidence fields/blocks.
+6. Click **Copy** and confirm the full bundle is copied as plain text.
 
 ### Action parsing (manual fallback)
 1. Paste AI output that includes lines like:

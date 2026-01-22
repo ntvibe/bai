@@ -7,36 +7,31 @@ const initModal = document.getElementById("init-modal");
 const closeInitModalBtn = document.getElementById("close-init-modal");
 const copyContextBtn = document.getElementById("copy-context");
 const refreshContextBtn = document.getElementById("refresh-context");
+const getTextBtn = document.getElementById("get-text");
+const scanPageBtn = document.getElementById("scan-page");
+const clearEvidenceBtn = document.getElementById("clear-evidence");
 const actionInput = document.getElementById("action-input");
 const parseActionBtn = document.getElementById("parse-action");
-const scanActionBtn = document.getElementById("scan-action");
 const actionQueueEl = document.getElementById("action-queue");
 const connectionStatusEl = document.getElementById("connection-status");
-const chatTabStatusEl = document.getElementById("chat-tab-status");
-const scanStatusEl = document.getElementById("scan-status");
-const autoScanToggle = document.getElementById("auto-scan-toggle");
 
 const CONNECTED_STORAGE = "connected_state";
 const CONNECTED_SESSION_KEY = "connected_session_key";
-const CHAT_TAB_STORAGE = "chat_tab_id";
 const SEEN_LINES_STORAGE = "seen_line_hashes";
-const AUTO_SCAN_STORAGE = "auto_scan_enabled";
+const EVIDENCE_STORAGE = "evidence_by_tab";
 
 const actions = new Map();
 const actionOrder = [];
 let ctxCounter = 0;
 let latestContext = null;
+let latestTab = null;
 let currentSessionKey = "";
 let protocolText = "";
 let connected = false;
-let chatTabId = null;
-let autoScanEnabled = true;
-let autoScanTimer = null;
-let scanInFlight = false;
 let seenLineHashes = new Set();
-let lastScanAt = null;
+let evidenceByTab = new Map();
 
-function buildContext(tab) {
+function buildContext(tab, evidence) {
   ctxCounter += 1;
   const ctxId = `ctx${ctxCounter.toString().padStart(6, "0")}`;
   const nav = resolveNavState(tab);
@@ -49,6 +44,15 @@ function buildContext(tab) {
     n: tab?.title ?? "",
     nav,
   };
+  if (evidence?.sel) {
+    ctx.sel = evidence.sel;
+  }
+  if (evidence?.text) {
+    ctx.text = evidence.text;
+  }
+  if (evidence?.dom) {
+    ctx.dom = evidence.dom;
+  }
   latestContext = ctx;
   return ctx;
 }
@@ -68,6 +72,107 @@ function resolveNavState(tab) {
 
 function formatContext(ctx) {
   return `!baictx ${JSON.stringify(ctx)}`;
+}
+
+function formatDomEvidence(dom) {
+  return JSON.stringify(dom, null, 2);
+}
+
+function formatMessageBundle(ctx, evidence) {
+  const lines = [formatContext(ctx)];
+  if (evidence?.text) {
+    lines.push("---TEXT---");
+    lines.push(evidence.text);
+  }
+  if (evidence?.dom) {
+    lines.push("---SCAN---");
+    lines.push(formatDomEvidence(evidence.dom));
+  }
+  return lines.join("\n");
+}
+
+function pruneEvidence(evidence) {
+  const cleaned = { ...evidence };
+  if (!cleaned.sel) {
+    delete cleaned.sel;
+  }
+  if (!cleaned.text) {
+    delete cleaned.text;
+  }
+  if (!cleaned.dom || (Object.keys(cleaned.dom || {}).length === 0)) {
+    delete cleaned.dom;
+  }
+  if (!cleaned.lastEvidenceTs) {
+    delete cleaned.lastEvidenceTs;
+  }
+  return cleaned;
+}
+
+function getEvidenceForTab(tabId) {
+  if (!tabId) {
+    return null;
+  }
+  return evidenceByTab.get(tabId) || null;
+}
+
+async function persistEvidenceState() {
+  const payload = {};
+  evidenceByTab.forEach((value, key) => {
+    payload[key] = value;
+  });
+  await chrome.storage.session.set({ [EVIDENCE_STORAGE]: payload });
+}
+
+async function setEvidenceForTab(tabId, updates) {
+  if (!tabId) {
+    return;
+  }
+  const existing = evidenceByTab.get(tabId) || {};
+  const merged = pruneEvidence({
+    ...existing,
+    ...updates,
+    lastEvidenceTs: new Date().toISOString(),
+  });
+  if (Object.keys(merged).length === 0) {
+    evidenceByTab.delete(tabId);
+  } else {
+    evidenceByTab.set(tabId, merged);
+  }
+  await persistEvidenceState();
+}
+
+async function clearEvidenceForTab(tabId) {
+  if (!tabId) {
+    return;
+  }
+  evidenceByTab.delete(tabId);
+  await persistEvidenceState();
+}
+
+async function loadEvidenceState() {
+  const stored = await chrome.storage.session.get(EVIDENCE_STORAGE);
+  const data = stored[EVIDENCE_STORAGE];
+  if (!data || typeof data !== "object") {
+    evidenceByTab = new Map();
+    return;
+  }
+  evidenceByTab = new Map(
+    Object.entries(data).map(([key, value]) => [Number(key), value]),
+  );
+}
+
+function updateContextFromTab(tab) {
+  latestTab = tab;
+  const evidence = getEvidenceForTab(tab?.id);
+  const ctx = buildContext(tab, evidence);
+  contextEl.textContent = formatMessageBundle(ctx, evidence);
+}
+
+function refreshContextFromLatest() {
+  if (!latestTab) {
+    return;
+  }
+  updateContextFromTab(latestTab);
 }
 
 async function loadProtocolText() {
@@ -103,32 +208,6 @@ function updateConnectionStatus() {
   }
 }
 
-function updateChatTabStatus() {
-  if (!chatTabStatusEl) {
-    return;
-  }
-  chatTabStatusEl.textContent = `chat tab: ${chatTabId ?? "not set"}`;
-}
-
-function formatScanTime(date) {
-  if (!date) {
-    return "never";
-  }
-  return date.toLocaleTimeString();
-}
-
-function updateScanStatus(foundCount, message) {
-  if (!scanStatusEl) {
-    return;
-  }
-  scanStatusEl.classList.toggle("warning", Boolean(message));
-  if (message) {
-    scanStatusEl.textContent = message;
-    return;
-  }
-  scanStatusEl.textContent = `Last scan: ${formatScanTime(lastScanAt)} | Found: ${foundCount}`;
-}
-
 function hashLine(line) {
   let hash = 0;
   for (let i = 0; i < line.length; i += 1) {
@@ -150,23 +229,9 @@ async function persistSeenLineHashes() {
   await chrome.storage.session.set({ [SEEN_LINES_STORAGE]: Array.from(seenLineHashes) });
 }
 
-function updateAutoScanTimer() {
-  if (autoScanTimer) {
-    clearInterval(autoScanTimer);
-    autoScanTimer = null;
-  }
-  if (!autoScanEnabled || !connected || !chatTabId) {
-    return;
-  }
-  autoScanTimer = setInterval(() => {
-    scanChatTab();
-  }, 2500);
-}
-
 async function setConnected(value) {
   connected = value;
   updateConnectionStatus();
-  updateAutoScanTimer();
   if (currentSessionKey) {
     await chrome.storage.session.set({
       [CONNECTED_STORAGE]: connected,
@@ -200,22 +265,10 @@ async function loadSessionKey() {
   await loadConnectionState(sessionKey);
 }
 
-async function loadChatTabState() {
-  const stored = await chrome.storage.session.get([CHAT_TAB_STORAGE, AUTO_SCAN_STORAGE]);
-  chatTabId = stored[CHAT_TAB_STORAGE] ?? null;
-  autoScanEnabled = stored[AUTO_SCAN_STORAGE] !== false;
-  if (autoScanToggle) {
-    autoScanToggle.checked = autoScanEnabled;
-  }
-  updateChatTabStatus();
-  updateAutoScanTimer();
-}
-
 async function loadActiveTab() {
   const response = await chrome.runtime.sendMessage({ type: "request_active_tab" });
   if (response?.tab) {
-    const ctx = buildContext(response.tab);
-    contextEl.textContent = formatContext(ctx);
+    updateContextFromTab(response.tab);
   }
 }
 
@@ -460,38 +513,6 @@ function renderQueue() {
   });
 }
 
-async function scanChatTab() {
-  if (scanInFlight) {
-    return;
-  }
-  scanInFlight = true;
-  updateScanStatus(0, null);
-  if (!chatTabId) {
-    updateScanStatus(0, "Cannot scan: chat tab not set.");
-    scanInFlight = false;
-    return;
-  }
-  const response = await chrome.runtime.sendMessage({
-    type: "CHAT_SCAN_REQUEST",
-    chatTabId,
-  });
-  if (response?.error === "NO_PERMISSION") {
-    updateScanStatus(0, "Cannot read chat tab; grant permission for this site.");
-    scanInFlight = false;
-    return;
-  }
-  if (response?.error) {
-    updateScanStatus(0, "Unable to scan chat tab.");
-    scanInFlight = false;
-    return;
-  }
-  const lines = Array.isArray(response?.lines) ? response.lines : [];
-  lastScanAt = new Date();
-  await handleProtocolLines(lines, { dedupe: true });
-  updateScanStatus(lines.length, null);
-  scanInFlight = false;
-}
-
 copyContextBtn.addEventListener("click", () => {
   copyText(contextEl.textContent);
 });
@@ -505,28 +526,56 @@ parseActionBtn.addEventListener("click", async () => {
   await handleProtocolLines(rawLines, { dedupe: false });
 });
 
-scanActionBtn.addEventListener("click", () => {
-  scanChatTab();
+getTextBtn?.addEventListener("click", async () => {
+  const tabId = latestTab?.id;
+  if (!tabId) {
+    await loadActiveTab();
+    return;
+  }
+  const response = await chrome.runtime.sendMessage({
+    type: "EVIDENCE_REQUEST",
+    tabId,
+    requestType: "GET_TEXT_EXCERPT",
+  });
+  if (!response?.ok) {
+    return;
+  }
+  await setEvidenceForTab(tabId, {
+    sel: response.selection || "",
+    text: response.text || "",
+  });
+  refreshContextFromLatest();
+});
+
+scanPageBtn?.addEventListener("click", async () => {
+  const tabId = latestTab?.id;
+  if (!tabId) {
+    await loadActiveTab();
+    return;
+  }
+  const response = await chrome.runtime.sendMessage({
+    type: "EVIDENCE_REQUEST",
+    tabId,
+    requestType: "RUN_SCAN",
+  });
+  if (!response?.ok) {
+    return;
+  }
+  await setEvidenceForTab(tabId, { dom: response.dom || null });
+  refreshContextFromLatest();
+});
+
+clearEvidenceBtn?.addEventListener("click", async () => {
+  const tabId = latestTab?.id;
+  if (!tabId) {
+    return;
+  }
+  await clearEvidenceForTab(tabId);
+  refreshContextFromLatest();
 });
 
 copyInitPromptBtn.addEventListener("click", () => {
   copyText(initPromptEl.textContent);
-  chrome.runtime.sendMessage({ type: "request_active_tab" }).then((response) => {
-    if (!response?.tab?.id) {
-      return;
-    }
-    chatTabId = response.tab.id;
-    chrome.storage.session.set({ [CHAT_TAB_STORAGE]: chatTabId });
-    chrome.runtime.sendMessage({ type: "set_chat_tab", tabId: chatTabId });
-    updateChatTabStatus();
-    updateAutoScanTimer();
-  });
-});
-
-autoScanToggle?.addEventListener("change", () => {
-  autoScanEnabled = autoScanToggle.checked;
-  chrome.storage.session.set({ [AUTO_SCAN_STORAGE]: autoScanEnabled });
-  updateAutoScanTimer();
 });
 
 showInitPromptBtn.addEventListener("click", () => {
@@ -554,14 +603,16 @@ initModal?.addEventListener("click", (event) => {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "active_tab" && message.tab) {
-    const ctx = buildContext(message.tab);
-    contextEl.textContent = formatContext(ctx);
+    updateContextFromTab(message.tab);
   }
 });
 
-loadSessionKey();
-loadActiveTab();
-loadProtocolText();
-loadChatTabState();
-loadSeenLineHashes();
-updateScanStatus(0, null);
+async function initializePanel() {
+  await loadEvidenceState();
+  await loadSessionKey();
+  await loadActiveTab();
+  loadProtocolText();
+  loadSeenLineHashes();
+}
+
+initializePanel();

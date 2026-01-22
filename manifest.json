@@ -3,8 +3,7 @@
   "name": "bAI",
   "version": "0.1.0",
   "description": "bAI MVP side panel for protocol text parsing.",
-  "permissions": ["sidePanel", "storage", "tabs", "scripting"],
-  "host_permissions": ["https://chatgpt.com/*"],
+  "permissions": ["sidePanel", "storage", "tabs", "scripting", "activeTab"],
   "action": {
     "default_title": "bAI"
   },
