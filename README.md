@@ -11,6 +11,13 @@ This repository contains the smallest working Chrome MV3 extension for the bAI M
 
 ## Manual MVP checks
 
+### Initialization prompt + connection status
+1. In the Side Panel, locate the **Initialization** section above **Session**.
+2. Click **Copy init prompt** and paste the text as the **first message** in a new AI chat.
+3. Confirm the AI replies with a line like `!baisession {"session_key":"<SESSION_KEY>"}`.
+4. Paste that AI reply into **Inbound** and click **Parse**.
+5. Verify the status dot shows **Connected** and stays green until the browser session ends or the session key changes.
+
 ### Session handshake
 1. Open the Side Panel.
 2. Confirm the **Session** section shows a session key and the handshake line:

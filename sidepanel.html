@@ -9,9 +9,26 @@
   <body>
     <main>
       <header>
-        <h1>bAI</h1>
+        <div class="header-title">
+          <h1>bAI</h1>
+          <div class="status-indicator" id="connection-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span class="status-label">Disconnected</span>
+          </div>
+        </div>
         <p class="subtitle">MVP side panel</p>
       </header>
+
+      <section class="panel-section">
+        <h2>Initialization</h2>
+        <textarea
+          id="init-prompt"
+          class="mono mono-textarea"
+          rows="10"
+          readonly
+        ></textarea>
+        <button id="copy-init-prompt" type="button">Copy init prompt</button>
+      </section>
 
       <section class="panel-section">
         <h2>Session</h2>
@@ -42,6 +59,7 @@
         <h2>Inbound</h2>
         <textarea id="inbound-input" rows="8" placeholder="Paste AI output here..."></textarea>
         <button id="parse-inbound" type="button">Parse</button>
+        <div id="inbound-events" class="inbound-events"></div>
       </section>
 
       <section class="panel-section">

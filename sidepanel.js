@@ -1,17 +1,27 @@
 const sessionKeyEl = document.getElementById("session-key");
 const handshakeEl = document.getElementById("handshake-line");
 const contextEl = document.getElementById("context-line");
+const initPromptEl = document.getElementById("init-prompt");
+const copyInitPromptBtn = document.getElementById("copy-init-prompt");
 const copyHandshakeBtn = document.getElementById("copy-handshake");
 const copyContextBtn = document.getElementById("copy-context");
 const refreshContextBtn = document.getElementById("refresh-context");
 const inboundInput = document.getElementById("inbound-input");
 const parseInboundBtn = document.getElementById("parse-inbound");
 const actionQueueEl = document.getElementById("action-queue");
+const connectionStatusEl = document.getElementById("connection-status");
+const inboundEventsEl = document.getElementById("inbound-events");
+
+const CONNECTED_STORAGE = "connected_state";
+const CONNECTED_SESSION_KEY = "connected_session_key";
 
 const actions = new Map();
 const actionOrder = [];
 let ctxCounter = 0;
 let latestContext = null;
+let currentSessionKey = "";
+let protocolText = "";
+let connected = false;
 
 function formatHandshake(sessionKey) {
   return `!baisession {"session_key":"${sessionKey}"}`;
@@ -51,11 +61,72 @@ function formatContext(ctx) {
   return `!baictx ${JSON.stringify(ctx)}`;
 }
 
+async function loadProtocolText() {
+  try {
+    const response = await fetch(chrome.runtime.getURL("protocol.md"));
+    protocolText = await response.text();
+  } catch (error) {
+    console.warn("Failed to load protocol text", error);
+    protocolText = "";
+  }
+  updateInitPrompt();
+}
+
+function updateInitPrompt() {
+  if (!initPromptEl) {
+    return;
+  }
+  if (!protocolText || !currentSessionKey) {
+    initPromptEl.value = "";
+    return;
+  }
+  initPromptEl.value = protocolText.replaceAll("<SESSION_KEY>", currentSessionKey);
+}
+
+function updateConnectionStatus() {
+  if (!connectionStatusEl) {
+    return;
+  }
+  connectionStatusEl.classList.toggle("connected", connected);
+  const label = connectionStatusEl.querySelector(".status-label");
+  if (label) {
+    label.textContent = connected ? "Connected" : "Disconnected";
+  }
+}
+
+async function setConnected(value) {
+  connected = value;
+  updateConnectionStatus();
+  if (currentSessionKey) {
+    await chrome.storage.session.set({
+      [CONNECTED_STORAGE]: connected,
+      [CONNECTED_SESSION_KEY]: currentSessionKey,
+    });
+  }
+}
+
+async function loadConnectionState(sessionKey) {
+  const stored = await chrome.storage.session.get([CONNECTED_STORAGE, CONNECTED_SESSION_KEY]);
+  if (stored[CONNECTED_SESSION_KEY] === sessionKey && stored[CONNECTED_STORAGE] === true) {
+    connected = true;
+  } else {
+    connected = false;
+    await chrome.storage.session.set({
+      [CONNECTED_STORAGE]: false,
+      [CONNECTED_SESSION_KEY]: sessionKey,
+    });
+  }
+  updateConnectionStatus();
+}
+
 async function loadSessionKey() {
   const response = await chrome.runtime.sendMessage({ type: "get_session_key" });
   const sessionKey = response?.sessionKey || "";
+  currentSessionKey = sessionKey;
   sessionKeyEl.textContent = sessionKey;
   handshakeEl.textContent = formatHandshake(sessionKey);
+  updateInitPrompt();
+  await loadConnectionState(sessionKey);
 }
 
 async function loadActiveTab() {
@@ -88,11 +159,56 @@ function ensureAction(id) {
   return actions.get(id);
 }
 
+function logInboundEvent(message, { warning = false } = {}) {
+  if (!inboundEventsEl) {
+    return;
+  }
+  const entry = document.createElement("div");
+  entry.className = warning ? "event warning" : "event";
+  entry.textContent = message;
+  inboundEventsEl.prepend(entry);
+}
+
+function parseSessionEvent(line) {
+  const sessionMatch = line.match(/^!baisession\s+(\{.*\})$/);
+  if (sessionMatch) {
+    try {
+      const payload = JSON.parse(sessionMatch[1]);
+      if (payload?.session_key === currentSessionKey) {
+        logInboundEvent("Handshake confirmed for current session key.");
+        setConnected(true);
+      } else {
+        logInboundEvent("Received handshake for a different session key.", { warning: true });
+      }
+    } catch (error) {
+      logInboundEvent("Failed to parse !baisession payload.", { warning: true });
+    }
+    return true;
+  }
+
+  const switchMatch = line.match(/^!baiswitch\s+(\{.*\})$/);
+  if (switchMatch) {
+    try {
+      const payload = JSON.parse(switchMatch[1]);
+      const target = payload?.session_key ? ` ${payload.session_key}` : "";
+      logInboundEvent(`Warning: received !baiswitch${target}.`, { warning: true });
+    } catch (error) {
+      logInboundEvent("Warning: received unparseable !baiswitch.", { warning: true });
+    }
+    return true;
+  }
+
+  return false;
+}
+
 function parseInboundLines(text) {
   const lines = text.split(/\r?\n/);
   lines.forEach((line) => {
     const trimmed = line.trim();
     if (!trimmed) {
+      return;
+    }
+    if (parseSessionEvent(trimmed)) {
       return;
     }
 
@@ -241,6 +357,10 @@ parseInboundBtn.addEventListener("click", () => {
   parseInboundLines(inboundInput.value);
 });
 
+copyInitPromptBtn.addEventListener("click", () => {
+  copyText(initPromptEl.value);
+});
+
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.type === "active_tab" && message.tab) {
     const ctx = buildContext(message.tab);
@@ -250,3 +370,4 @@ chrome.runtime.onMessage.addListener((message) => {
 
 loadSessionKey();
 loadActiveTab();
+loadProtocolText();

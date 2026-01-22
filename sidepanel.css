@@ -22,6 +22,36 @@ header h1 {
   font-size: 20px;
 }
 
+.header-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #c7cbd4;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #5a606b;
+}
+
+.status-indicator.connected .status-dot {
+  background: #2ecc71;
+}
+
+.status-indicator.connected .status-label {
+  color: #9af0b9;
+}
+
 .subtitle {
   margin: 4px 0 0;
   color: #b1b5bd;
@@ -56,6 +86,10 @@ header h1 {
   white-space: pre-wrap;
 }
 
+.mono-textarea {
+  min-height: 160px;
+}
+
 button {
   align-self: flex-start;
   background: #2b5bff;
@@ -79,6 +113,26 @@ textarea {
   padding: 8px;
   border-radius: 6px;
   resize: vertical;
+}
+
+.inbound-events {
+  font-size: 12px;
+  color: #c7cbd4;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inbound-events .event {
+  background: #10131a;
+  border: 1px solid #262a35;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.inbound-events .event.warning {
+  border-color: #6b3f00;
+  color: #ffe1b3;
 }
 
 .button-row {
