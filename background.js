@@ -1,5 +1,4 @@
 const SESSION_KEY_STORAGE = "session_key";
-const CHAT_TAB_STORAGE = "chat_tab_id";
 
 function generateSessionKey() {
   const bytes = new Uint8Array(16);
@@ -68,18 +67,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       .catch(() => sendResponse({ tab: null }));
     return true;
   }
-  if (message?.type === "set_chat_tab") {
-    const tabId = message?.tabId ?? null;
-    chrome.storage.session
-      .set({ [CHAT_TAB_STORAGE]: tabId })
-      .then(() => sendResponse({ ok: true }))
-      .catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-  if (message?.type === "CHAT_SCAN_REQUEST") {
-    const tabId = message?.chatTabId;
+  if (message?.type === "EVIDENCE_REQUEST") {
+    const tabId = message?.tabId;
+    const requestType = message?.requestType;
     if (!tabId) {
-      sendResponse({ lines: [], error: "NO_TAB" });
+      sendResponse({ ok: false, error: "NO_TAB" });
+      return false;
+    }
+    if (!["GET_TEXT_EXCERPT", "RUN_SCAN", "GET_SELECTION"].includes(requestType)) {
+      sendResponse({ ok: false, error: "BAD_REQUEST" });
       return false;
     }
     (async () => {
@@ -90,15 +86,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         });
       } catch (error) {
         console.warn("Failed to inject content script", error);
-        sendResponse({ lines: [], error: "NO_PERMISSION" });
+        sendResponse({ ok: false, error: "NO_PERMISSION" });
         return;
       }
       try {
-        const response = await chrome.tabs.sendMessage(tabId, { type: "CHAT_SCAN" });
-        sendResponse({ lines: response?.lines || [] });
+        const response = await chrome.tabs.sendMessage(tabId, { type: requestType });
+        sendResponse({ ok: true, ...response });
       } catch (error) {
-        console.warn("Failed to scan chat tab", error);
-        sendResponse({ lines: [], error: "NO_RECEIVER" });
+        console.warn("Failed to capture evidence", error);
+        sendResponse({ ok: false, error: "NO_RECEIVER" });
       }
     })();
     return true;
