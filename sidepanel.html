@@ -19,6 +19,7 @@
         <div class="session-meta">
           session: <span id="session-key" class="mono-inline">Loading…</span>
         </div>
+        <div class="session-meta" id="chat-tab-status">chat tab: not set</div>
         <p class="subtitle">MVP side panel</p>
       </header>
 
@@ -40,11 +41,20 @@
 
       <section class="panel-section">
         <h2>Action</h2>
-        <textarea id="action-input" rows="8" placeholder="Paste AI output or protocol lines here..."></textarea>
+        <textarea
+          id="action-input"
+          rows="8"
+          placeholder="Manual paste (fallback) — protocol lines only..."
+        ></textarea>
         <div class="button-row">
           <button id="parse-action" type="button">Parse</button>
           <button id="scan-action" type="button">Scan</button>
+          <label class="toggle">
+            <input id="auto-scan-toggle" type="checkbox" checked />
+            <span>Auto-scan</span>
+          </label>
         </div>
+        <div id="scan-status" class="status-text">Last scan: never</div>
         <div id="action-queue" class="queue"></div>
       </section>
     </main>

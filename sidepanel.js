@@ -12,9 +12,15 @@ const parseActionBtn = document.getElementById("parse-action");
 const scanActionBtn = document.getElementById("scan-action");
 const actionQueueEl = document.getElementById("action-queue");
 const connectionStatusEl = document.getElementById("connection-status");
+const chatTabStatusEl = document.getElementById("chat-tab-status");
+const scanStatusEl = document.getElementById("scan-status");
+const autoScanToggle = document.getElementById("auto-scan-toggle");
 
 const CONNECTED_STORAGE = "connected_state";
 const CONNECTED_SESSION_KEY = "connected_session_key";
+const CHAT_TAB_STORAGE = "chat_tab_id";
+const SEEN_LINES_STORAGE = "seen_line_hashes";
+const AUTO_SCAN_STORAGE = "auto_scan_enabled";
 
 const actions = new Map();
 const actionOrder = [];
@@ -23,6 +29,12 @@ let latestContext = null;
 let currentSessionKey = "";
 let protocolText = "";
 let connected = false;
+let chatTabId = null;
+let autoScanEnabled = true;
+let autoScanTimer = null;
+let scanInFlight = false;
+let seenLineHashes = new Set();
+let lastScanAt = null;
 
 function buildContext(tab) {
   ctxCounter += 1;
@@ -91,9 +103,70 @@ function updateConnectionStatus() {
   }
 }
 
+function updateChatTabStatus() {
+  if (!chatTabStatusEl) {
+    return;
+  }
+  chatTabStatusEl.textContent = `chat tab: ${chatTabId ?? "not set"}`;
+}
+
+function formatScanTime(date) {
+  if (!date) {
+    return "never";
+  }
+  return date.toLocaleTimeString();
+}
+
+function updateScanStatus(foundCount, message) {
+  if (!scanStatusEl) {
+    return;
+  }
+  scanStatusEl.classList.toggle("warning", Boolean(message));
+  if (message) {
+    scanStatusEl.textContent = message;
+    return;
+  }
+  scanStatusEl.textContent = `Last scan: ${formatScanTime(lastScanAt)} | Found: ${foundCount}`;
+}
+
+function hashLine(line) {
+  let hash = 0;
+  for (let i = 0; i < line.length; i += 1) {
+    hash = (hash << 5) - hash + line.charCodeAt(i);
+    hash |= 0;
+  }
+  return `${hash}`;
+}
+
+async function loadSeenLineHashes() {
+  const stored = await chrome.storage.session.get(SEEN_LINES_STORAGE);
+  const hashes = stored[SEEN_LINES_STORAGE];
+  if (Array.isArray(hashes)) {
+    seenLineHashes = new Set(hashes);
+  }
+}
+
+async function persistSeenLineHashes() {
+  await chrome.storage.session.set({ [SEEN_LINES_STORAGE]: Array.from(seenLineHashes) });
+}
+
+function updateAutoScanTimer() {
+  if (autoScanTimer) {
+    clearInterval(autoScanTimer);
+    autoScanTimer = null;
+  }
+  if (!autoScanEnabled || !connected || !chatTabId) {
+    return;
+  }
+  autoScanTimer = setInterval(() => {
+    scanChatTab();
+  }, 2500);
+}
+
 async function setConnected(value) {
   connected = value;
   updateConnectionStatus();
+  updateAutoScanTimer();
   if (currentSessionKey) {
     await chrome.storage.session.set({
       [CONNECTED_STORAGE]: connected,
@@ -125,6 +198,17 @@ async function loadSessionKey() {
   sessionKeyEl.textContent = sessionKey;
   updateInitPrompt();
   await loadConnectionState(sessionKey);
+}
+
+async function loadChatTabState() {
+  const stored = await chrome.storage.session.get([CHAT_TAB_STORAGE, AUTO_SCAN_STORAGE]);
+  chatTabId = stored[CHAT_TAB_STORAGE] ?? null;
+  autoScanEnabled = stored[AUTO_SCAN_STORAGE] !== false;
+  if (autoScanToggle) {
+    autoScanToggle.checked = autoScanEnabled;
+  }
+  updateChatTabStatus();
+  updateAutoScanTimer();
 }
 
 async function loadActiveTab() {
@@ -185,6 +269,47 @@ function maybeSetConnectedFromLine(line) {
     }
   } catch (error) {
     console.warn("Failed to parse !baisession payload.", error);
+  }
+}
+
+function normalizeLines(lines) {
+  return lines
+    .map((line) => line.trim())
+    .filter((line) => line && !isFenceLine(line));
+}
+
+async function handleProtocolLines(lines, { dedupe } = { dedupe: false }) {
+  const cleaned = normalizeLines(lines).filter(
+    (line) => line.startsWith("!baisession") || line.startsWith("!baiact"),
+  );
+
+  const actionable = [];
+  cleaned.forEach((line) => {
+    maybeSetConnectedFromLine(line);
+    if (line.startsWith("!baisession")) {
+      return;
+    }
+    if (!dedupe) {
+      actionable.push(line);
+      return;
+    }
+    const isUpdate = /^!baiact\d{6}upd\d{3}\b/.test(line);
+    const hash = hashLine(line);
+    if (!isUpdate && seenLineHashes.has(hash)) {
+      return;
+    }
+    seenLineHashes.add(hash);
+    actionable.push(line);
+  });
+
+  if (dedupe) {
+    await persistSeenLineHashes();
+  }
+
+  if (actionable.length) {
+    parseProtocolLines(actionable);
+  } else {
+    renderQueue();
   }
 }
 
@@ -335,6 +460,38 @@ function renderQueue() {
   });
 }
 
+async function scanChatTab() {
+  if (scanInFlight) {
+    return;
+  }
+  scanInFlight = true;
+  updateScanStatus(0, null);
+  if (!chatTabId) {
+    updateScanStatus(0, "Cannot scan: chat tab not set.");
+    scanInFlight = false;
+    return;
+  }
+  const response = await chrome.runtime.sendMessage({
+    type: "CHAT_SCAN_REQUEST",
+    chatTabId,
+  });
+  if (response?.error === "NO_PERMISSION") {
+    updateScanStatus(0, "Cannot read chat tab; grant permission for this site.");
+    scanInFlight = false;
+    return;
+  }
+  if (response?.error) {
+    updateScanStatus(0, "Unable to scan chat tab.");
+    scanInFlight = false;
+    return;
+  }
+  const lines = Array.isArray(response?.lines) ? response.lines : [];
+  lastScanAt = new Date();
+  await handleProtocolLines(lines, { dedupe: true });
+  updateScanStatus(lines.length, null);
+  scanInFlight = false;
+}
+
 copyContextBtn.addEventListener("click", () => {
   copyText(contextEl.textContent);
 });
@@ -343,32 +500,33 @@ refreshContextBtn.addEventListener("click", async () => {
   await loadActiveTab();
 });
 
-parseActionBtn.addEventListener("click", () => {
+parseActionBtn.addEventListener("click", async () => {
   const rawLines = actionInput.value.split(/\r?\n/);
-  const cleaned = rawLines
-    .map((line) => line.trim())
-    .filter((line) => line && !isFenceLine(line));
-  cleaned.forEach((line) => maybeSetConnectedFromLine(line));
-  parseProtocolLines(cleaned);
+  await handleProtocolLines(rawLines, { dedupe: false });
 });
 
 scanActionBtn.addEventListener("click", () => {
-  const rawLines = actionInput.value.split(/\r?\n/);
-  const cleaned = rawLines
-    .map((line) => line.trim())
-    .filter((line) => line && !isFenceLine(line));
-  cleaned.forEach((line) => maybeSetConnectedFromLine(line));
-  const extracted = cleaned.filter(
-    (line) => line.startsWith("!baisession") || line.startsWith("!baiact"),
-  );
-  parseProtocolLines(extracted);
-  if (extracted.length) {
-    actionInput.value = extracted.join("\n");
-  }
+  scanChatTab();
 });
 
 copyInitPromptBtn.addEventListener("click", () => {
   copyText(initPromptEl.textContent);
+  chrome.runtime.sendMessage({ type: "request_active_tab" }).then((response) => {
+    if (!response?.tab?.id) {
+      return;
+    }
+    chatTabId = response.tab.id;
+    chrome.storage.session.set({ [CHAT_TAB_STORAGE]: chatTabId });
+    chrome.runtime.sendMessage({ type: "set_chat_tab", tabId: chatTabId });
+    updateChatTabStatus();
+    updateAutoScanTimer();
+  });
+});
+
+autoScanToggle?.addEventListener("change", () => {
+  autoScanEnabled = autoScanToggle.checked;
+  chrome.storage.session.set({ [AUTO_SCAN_STORAGE]: autoScanEnabled });
+  updateAutoScanTimer();
 });
 
 showInitPromptBtn.addEventListener("click", () => {
@@ -404,3 +562,6 @@ chrome.runtime.onMessage.addListener((message) => {
 loadSessionKey();
 loadActiveTab();
 loadProtocolText();
+loadChatTabState();
+loadSeenLineHashes();
+updateScanStatus(0, null);
