@@ -16,57 +16,48 @@
             <span class="status-label">Disconnected</span>
           </div>
         </div>
+        <div class="session-meta">
+          session: <span id="session-key" class="mono-inline">Loading…</span>
+        </div>
         <p class="subtitle">MVP side panel</p>
       </header>
 
       <section class="panel-section">
-        <h2>Initialization</h2>
-        <textarea
-          id="init-prompt"
-          class="mono mono-textarea"
-          rows="10"
-          readonly
-        ></textarea>
-        <button id="copy-init-prompt" type="button">Copy init prompt</button>
-      </section>
-
-      <section class="panel-section">
-        <h2>Session</h2>
-        <div class="field">
-          <label>Session key</label>
-          <div id="session-key" class="mono">Loading…</div>
-        </div>
-        <div class="field">
-          <label>Handshake</label>
-          <div class="mono" id="handshake-line"></div>
-        </div>
-        <button id="copy-handshake" type="button">Copy handshake</button>
-      </section>
-
-      <section class="panel-section">
-        <h2>Outgoing Context</h2>
-        <div class="field">
-          <label>Canonical context</label>
-          <div class="mono" id="context-line"></div>
-        </div>
         <div class="button-row">
-          <button id="copy-context" type="button">Copy ctx</button>
-          <button id="refresh-context" type="button">Refresh ctx</button>
+          <button id="copy-init-prompt" type="button">Copy init prompt</button>
+          <button id="show-init-prompt" type="button">Show init prompt</button>
         </div>
       </section>
 
       <section class="panel-section">
-        <h2>Inbound</h2>
-        <textarea id="inbound-input" rows="8" placeholder="Paste AI output here..."></textarea>
-        <button id="parse-inbound" type="button">Parse</button>
-        <div id="inbound-events" class="inbound-events"></div>
+        <h2>Message for AI</h2>
+        <div class="mono" id="context-line"></div>
+        <div class="button-row">
+          <button id="copy-context" type="button">Copy</button>
+          <button id="refresh-context" type="button">Refresh</button>
+        </div>
       </section>
 
       <section class="panel-section">
-        <h2>Action Queue</h2>
+        <h2>Action</h2>
+        <textarea id="action-input" rows="8" placeholder="Paste AI output or protocol lines here..."></textarea>
+        <div class="button-row">
+          <button id="parse-action" type="button">Parse</button>
+          <button id="scan-action" type="button">Scan</button>
+        </div>
         <div id="action-queue" class="queue"></div>
       </section>
     </main>
+
+    <div id="init-modal" class="modal" aria-hidden="true">
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="init-modal-title">
+        <div class="modal-header">
+          <h2 id="init-modal-title">Initialization prompt</h2>
+          <button id="close-init-modal" class="modal-close" type="button" aria-label="Close">×</button>
+        </div>
+        <div id="init-prompt" class="mono mono-scroll"></div>
+      </div>
+    </div>
 
     <script src="sidepanel.js"></script>
   </body>

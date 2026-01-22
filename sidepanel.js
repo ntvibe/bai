@@ -1,16 +1,17 @@
 const sessionKeyEl = document.getElementById("session-key");
-const handshakeEl = document.getElementById("handshake-line");
 const contextEl = document.getElementById("context-line");
 const initPromptEl = document.getElementById("init-prompt");
 const copyInitPromptBtn = document.getElementById("copy-init-prompt");
-const copyHandshakeBtn = document.getElementById("copy-handshake");
+const showInitPromptBtn = document.getElementById("show-init-prompt");
+const initModal = document.getElementById("init-modal");
+const closeInitModalBtn = document.getElementById("close-init-modal");
 const copyContextBtn = document.getElementById("copy-context");
 const refreshContextBtn = document.getElementById("refresh-context");
-const inboundInput = document.getElementById("inbound-input");
-const parseInboundBtn = document.getElementById("parse-inbound");
+const actionInput = document.getElementById("action-input");
+const parseActionBtn = document.getElementById("parse-action");
+const scanActionBtn = document.getElementById("scan-action");
 const actionQueueEl = document.getElementById("action-queue");
 const connectionStatusEl = document.getElementById("connection-status");
-const inboundEventsEl = document.getElementById("inbound-events");
 
 const CONNECTED_STORAGE = "connected_state";
 const CONNECTED_SESSION_KEY = "connected_session_key";
@@ -22,10 +23,6 @@ let latestContext = null;
 let currentSessionKey = "";
 let protocolText = "";
 let connected = false;
-
-function formatHandshake(sessionKey) {
-  return `!baisession {"session_key":"${sessionKey}"}`;
-}
 
 function buildContext(tab) {
   ctxCounter += 1;
@@ -77,10 +74,10 @@ function updateInitPrompt() {
     return;
   }
   if (!protocolText || !currentSessionKey) {
-    initPromptEl.value = "";
+    initPromptEl.textContent = "";
     return;
   }
-  initPromptEl.value = protocolText.replaceAll("<SESSION_KEY>", currentSessionKey);
+  initPromptEl.textContent = protocolText.replaceAll("<SESSION_KEY>", currentSessionKey);
 }
 
 function updateConnectionStatus() {
@@ -107,9 +104,8 @@ async function setConnected(value) {
 
 async function loadConnectionState(sessionKey) {
   const stored = await chrome.storage.session.get([CONNECTED_STORAGE, CONNECTED_SESSION_KEY]);
-  if (stored[CONNECTED_SESSION_KEY] === sessionKey && stored[CONNECTED_STORAGE] === true) {
-    connected = true;
-  } else {
+  connected = stored[CONNECTED_SESSION_KEY] === sessionKey && stored[CONNECTED_STORAGE] === true;
+  if (stored[CONNECTED_SESSION_KEY] !== sessionKey) {
     connected = false;
     await chrome.storage.session.set({
       [CONNECTED_STORAGE]: false,
@@ -122,9 +118,11 @@ async function loadConnectionState(sessionKey) {
 async function loadSessionKey() {
   const response = await chrome.runtime.sendMessage({ type: "get_session_key" });
   const sessionKey = response?.sessionKey || "";
+  if (currentSessionKey && currentSessionKey !== sessionKey) {
+    connected = false;
+  }
   currentSessionKey = sessionKey;
   sessionKeyEl.textContent = sessionKey;
-  handshakeEl.textContent = formatHandshake(sessionKey);
   updateInitPrompt();
   await loadConnectionState(sessionKey);
 }
@@ -159,69 +157,59 @@ function ensureAction(id) {
   return actions.get(id);
 }
 
-function logInboundEvent(message, { warning = false } = {}) {
-  if (!inboundEventsEl) {
+function isFenceLine(line) {
+  return line.startsWith("```");
+}
+
+function extractJsonSubstring(line) {
+  const start = line.indexOf("{");
+  const end = line.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+  return line.slice(start, end + 1);
+}
+
+function maybeSetConnectedFromLine(line) {
+  if (!line.startsWith("!baisession")) {
     return;
   }
-  const entry = document.createElement("div");
-  entry.className = warning ? "event warning" : "event";
-  entry.textContent = message;
-  inboundEventsEl.prepend(entry);
+  const jsonText = extractJsonSubstring(line);
+  if (!jsonText) {
+    return;
+  }
+  try {
+    const payload = JSON.parse(jsonText);
+    if (payload?.session_key === currentSessionKey) {
+      setConnected(true);
+    }
+  } catch (error) {
+    console.warn("Failed to parse !baisession payload.", error);
+  }
 }
 
-function parseSessionEvent(line) {
-  const sessionMatch = line.match(/^!baisession\s+(\{.*\})$/);
-  if (sessionMatch) {
-    try {
-      const payload = JSON.parse(sessionMatch[1]);
-      if (payload?.session_key === currentSessionKey) {
-        logInboundEvent("Handshake confirmed for current session key.");
-        setConnected(true);
-      } else {
-        logInboundEvent("Received handshake for a different session key.", { warning: true });
-      }
-    } catch (error) {
-      logInboundEvent("Failed to parse !baisession payload.", { warning: true });
-    }
-    return true;
-  }
-
-  const switchMatch = line.match(/^!baiswitch\s+(\{.*\})$/);
-  if (switchMatch) {
-    try {
-      const payload = JSON.parse(switchMatch[1]);
-      const target = payload?.session_key ? ` ${payload.session_key}` : "";
-      logInboundEvent(`Warning: received !baiswitch${target}.`, { warning: true });
-    } catch (error) {
-      logInboundEvent("Warning: received unparseable !baiswitch.", { warning: true });
-    }
-    return true;
-  }
-
-  return false;
-}
-
-function parseInboundLines(text) {
-  const lines = text.split(/\r?\n/);
+function parseProtocolLines(lines) {
   lines.forEach((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      return;
-    }
-    if (parseSessionEvent(trimmed)) {
+    if (line.startsWith("!baisession")) {
       return;
     }
 
-    const updateMatch = trimmed.match(/^!baiact(\d{6})upd(\d{3})\s+(\{.*\})$/);
+    const updateMatch = line.match(/^!baiact(\d{6})upd(\d{3})\b/);
     if (updateMatch) {
-      const [, id, versionRaw, jsonText] = updateMatch;
+      const [, id, versionRaw] = updateMatch;
       const version = Number.parseInt(versionRaw, 10);
       const action = ensureAction(id);
       if (Number.isNaN(version) || version <= action.update_version) {
         return;
       }
-      action.raw = trimmed;
+      action.raw = line;
       action.update_version = version;
+      const jsonText = extractJsonSubstring(line);
+      if (!jsonText) {
+        action.json = null;
+        action.status = "parse_error";
+        return;
+      }
       try {
         action.json = JSON.parse(jsonText);
         action.status = "queued";
@@ -232,21 +220,27 @@ function parseInboundLines(text) {
       return;
     }
 
-    const deleteMatch = trimmed.match(/^!baiact(\d{6})del$/);
+    const deleteMatch = line.match(/^!baiact(\d{6})del\b/);
     if (deleteMatch) {
       const [, id] = deleteMatch;
       const action = ensureAction(id);
-      action.raw = trimmed;
+      action.raw = line;
       action.status = "deleted";
       return;
     }
 
-    const actionMatch = trimmed.match(/^!baiact(\d{6})\s+(\{.*\})$/);
+    const actionMatch = line.match(/^!baiact(\d{6})\b/);
     if (actionMatch) {
-      const [, id, jsonText] = actionMatch;
+      const [, id] = actionMatch;
       const action = ensureAction(id);
-      action.raw = trimmed;
+      action.raw = line;
       action.update_version = Math.max(action.update_version, 0);
+      const jsonText = extractJsonSubstring(line);
+      if (!jsonText) {
+        action.json = null;
+        action.status = "parse_error";
+        return;
+      }
       try {
         action.json = JSON.parse(jsonText);
         action.status = "queued";
@@ -341,10 +335,6 @@ function renderQueue() {
   });
 }
 
-copyHandshakeBtn.addEventListener("click", () => {
-  copyText(handshakeEl.textContent);
-});
-
 copyContextBtn.addEventListener("click", () => {
   copyText(contextEl.textContent);
 });
@@ -353,12 +343,55 @@ refreshContextBtn.addEventListener("click", async () => {
   await loadActiveTab();
 });
 
-parseInboundBtn.addEventListener("click", () => {
-  parseInboundLines(inboundInput.value);
+parseActionBtn.addEventListener("click", () => {
+  const rawLines = actionInput.value.split(/\r?\n/);
+  const cleaned = rawLines
+    .map((line) => line.trim())
+    .filter((line) => line && !isFenceLine(line));
+  cleaned.forEach((line) => maybeSetConnectedFromLine(line));
+  parseProtocolLines(cleaned);
+});
+
+scanActionBtn.addEventListener("click", () => {
+  const rawLines = actionInput.value.split(/\r?\n/);
+  const cleaned = rawLines
+    .map((line) => line.trim())
+    .filter((line) => line && !isFenceLine(line));
+  cleaned.forEach((line) => maybeSetConnectedFromLine(line));
+  const extracted = cleaned.filter(
+    (line) => line.startsWith("!baisession") || line.startsWith("!baiact"),
+  );
+  parseProtocolLines(extracted);
+  if (extracted.length) {
+    actionInput.value = extracted.join("\n");
+  }
 });
 
 copyInitPromptBtn.addEventListener("click", () => {
-  copyText(initPromptEl.value);
+  copyText(initPromptEl.textContent);
+});
+
+showInitPromptBtn.addEventListener("click", () => {
+  if (!initModal) {
+    return;
+  }
+  initModal.classList.add("open");
+  initModal.setAttribute("aria-hidden", "false");
+});
+
+closeInitModalBtn.addEventListener("click", () => {
+  if (!initModal) {
+    return;
+  }
+  initModal.classList.remove("open");
+  initModal.setAttribute("aria-hidden", "true");
+});
+
+initModal?.addEventListener("click", (event) => {
+  if (event.target === initModal) {
+    initModal.classList.remove("open");
+    initModal.setAttribute("aria-hidden", "true");
+  }
 });
 
 chrome.runtime.onMessage.addListener((message) => {
