@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "bAI",
+  "version": "0.1.0",
+  "description": "bAI MVP side panel for protocol text parsing.",
+  "permissions": ["sidePanel", "storage", "tabs"],
+  "action": {
+    "default_title": "bAI"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  }
+}
