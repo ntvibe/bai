@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>bAI</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>bAI</h1>
+        <p class="subtitle">MVP side panel</p>
+      </header>
+
+      <section class="panel-section">
+        <h2>Session</h2>
+        <div class="field">
+          <label>Session key</label>
+          <div id="session-key" class="mono">Loading…</div>
+        </div>
+        <div class="field">
+          <label>Handshake</label>
+          <div class="mono" id="handshake-line"></div>
+        </div>
+        <button id="copy-handshake" type="button">Copy handshake</button>
+      </section>
+
+      <section class="panel-section">
+        <h2>Outgoing Context</h2>
+        <div class="field">
+          <label>Canonical context</label>
+          <div class="mono" id="context-line"></div>
+        </div>
+        <div class="button-row">
+          <button id="copy-context" type="button">Copy ctx</button>
+          <button id="refresh-context" type="button">Refresh ctx</button>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Inbound</h2>
+        <textarea id="inbound-input" rows="8" placeholder="Paste AI output here..."></textarea>
+        <button id="parse-inbound" type="button">Parse</button>
+      </section>
+
+      <section class="panel-section">
+        <h2>Action Queue</h2>
+        <div id="action-queue" class="queue"></div>
+      </section>
+    </main>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
